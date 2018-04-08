@@ -30,6 +30,10 @@ import com.mongodb.session.SessionContext;
 
 import static com.mongodb.assertions.Assertions.notNull;
 
+import io.opencensus.common.Scope;
+import io.opencensus.trace.Tracer;
+import io.opencensus.trace.Tracing;
+
 /**
  * A simple ReadWriteBinding implementation that supplies write connection sources bound to a possibly different primary each time, and a
  * read connection source bound to a possible different server each time.
@@ -40,6 +44,7 @@ public class ClusterBinding extends AbstractReferenceCounted implements ReadWrit
     private final Cluster cluster;
     private final ReadPreference readPreference;
     private final ReadConcern readConcern;
+    private static final Tracer TRACER = Tracing.getTracer();
 
     /**
      * Creates an instance.
@@ -67,8 +72,14 @@ public class ClusterBinding extends AbstractReferenceCounted implements ReadWrit
 
     @Override
     public ReadWriteBinding retain() {
-        super.retain();
-        return this;
+        Scope ss = TRACER.spanBuilder("com.mongodb.binding.ClusterBinding.retain").startScopedSpan();
+
+        try {
+            super.retain();
+            return this;
+        } finally {
+            ss.close();
+        }
     }
 
     @Override
@@ -78,7 +89,13 @@ public class ClusterBinding extends AbstractReferenceCounted implements ReadWrit
 
     @Override
     public ConnectionSource getReadConnectionSource() {
-        return new ClusterBindingConnectionSource(new ReadPreferenceServerSelector(readPreference));
+        Scope ss = TRACER.spanBuilder("com.mongodb.binding.ClusterBinding.getReadConnectionSource").startScopedSpan();
+
+        try {
+            return new ClusterBindingConnectionSource(new ReadPreferenceServerSelector(readPreference));
+        } finally {
+            ss.close();
+        }
     }
 
     @Override
@@ -88,7 +105,13 @@ public class ClusterBinding extends AbstractReferenceCounted implements ReadWrit
 
     @Override
     public ConnectionSource getWriteConnectionSource() {
-        return new ClusterBindingConnectionSource(new WritableServerSelector());
+        Scope ss = TRACER.spanBuilder("com.mongodb.binding.ClusterBinding.getWriteConnectionSource").startScopedSpan();
+
+        try {
+            return new ClusterBindingConnectionSource(new WritableServerSelector());
+        } finally {
+            ss.close();
+        }
     }
 
     private final class ClusterBindingConnectionSource extends AbstractReferenceCounted implements ConnectionSource {
@@ -101,7 +124,14 @@ public class ClusterBinding extends AbstractReferenceCounted implements ReadWrit
 
         @Override
         public ServerDescription getServerDescription() {
-            return server.getDescription();
+            Scope ss = TRACER.spanBuilder("com.mongodb.binding.ClusterBinding.ClusterBindingConnection.getServerDescription")
+                             .startScopedSpan();
+
+            try {
+                return server.getDescription();
+            } finally {
+                ss.close();
+            }
         }
 
         @Override
@@ -111,19 +141,40 @@ public class ClusterBinding extends AbstractReferenceCounted implements ReadWrit
 
         @Override
         public Connection getConnection() {
-            return server.getConnection();
+            Scope ss = TRACER.spanBuilder("com.mongodb.binding.ClusterBinding.ClusterBindingConnectionSource.getConnection")
+                             .startScopedSpan();
+
+            try {
+                return server.getConnection();
+            } finally {
+                ss.close();
+            }
         }
 
         public ConnectionSource retain() {
-            super.retain();
-            ClusterBinding.this.retain();
-            return this;
+            Scope ss = TRACER.spanBuilder("com.mongodb.binding.ClusterBinding.ClusterBindingConnectionSource.retain")
+                             .startScopedSpan();
+
+            try {
+                super.retain();
+                ClusterBinding.this.retain();
+                return this;
+            } finally {
+                ss.close();
+            }
         }
 
         @Override
         public void release() {
-            super.release();
-            ClusterBinding.this.release();
+            Scope ss = TRACER.spanBuilder("com.mongodb.binding.ClusterBinding.ClusterBindingConnectionSource.release")
+                             .startScopedSpan();
+
+            try {
+                super.release();
+                ClusterBinding.this.release();
+            } finally {
+                ss.close();
+            }
         }
     }
 }

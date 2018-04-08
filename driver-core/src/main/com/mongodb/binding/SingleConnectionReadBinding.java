@@ -24,6 +24,10 @@ import com.mongodb.session.SessionContext;
 
 import static com.mongodb.assertions.Assertions.notNull;
 
+import io.opencensus.common.Scope;
+import io.opencensus.trace.Tracer;
+import io.opencensus.trace.Tracing;
+
 /**
  * A read binding that is bound to a single connection.
  *
@@ -34,6 +38,7 @@ public class SingleConnectionReadBinding extends AbstractReferenceCounted implem
     private final ReadPreference readPreference;
     private final ServerDescription serverDescription;
     private final Connection connection;
+    private static final Tracer TRACER = Tracing.getTracer();
 
     /**
      * Construct an instance.
@@ -56,7 +61,13 @@ public class SingleConnectionReadBinding extends AbstractReferenceCounted implem
 
     @Override
     public ConnectionSource getReadConnectionSource() {
-        return new SingleConnectionSource();
+        Scope ss = TRACER.spanBuilder("com.mongodb.binding.SingleConnectionReadBinding.getReadConnectionSource").startScopedSpan();
+
+        try {
+            return new SingleConnectionSource();
+        } finally {
+            ss.close();
+        }
     }
 
     @Override
@@ -101,15 +112,29 @@ public class SingleConnectionReadBinding extends AbstractReferenceCounted implem
 
         @Override
         public ConnectionSource retain() {
-            super.retain();
-            return this;
+            Scope ss = TRACER.spanBuilder("com.mongodb.binding.SingleConnectionReadBinding.SingleConnectionSource.retain")
+                             .startScopedSpan();
+
+            try {
+                super.retain();
+                return this;
+            } finally {
+                ss.close();
+            }
         }
 
         @Override
         public void release() {
-            super.release();
-            if (super.getCount() == 0) {
-                SingleConnectionReadBinding.this.release();
+            Scope ss = TRACER.spanBuilder("com.mongodb.binding.SingleConnectionReadBinding.SingleConnectionSource.release")
+                             .startScopedSpan();
+
+            try {
+                super.release();
+                if (super.getCount() == 0) {
+                    SingleConnectionReadBinding.this.release();
+                }
+            } finally {
+                ss.close();
             }
         }
     }

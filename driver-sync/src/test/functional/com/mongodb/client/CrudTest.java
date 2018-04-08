@@ -32,6 +32,12 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 
+import io.opencensus.exporter.trace.stackdriver.StackdriverTraceConfiguration;
+import io.opencensus.exporter.trace.stackdriver.StackdriverTraceExporter;
+import io.opencensus.trace.config.TraceConfig;
+import io.opencensus.trace.samplers.Samplers;
+import io.opencensus.trace.Tracing;
+
 import static com.mongodb.ClusterFixture.serverVersionGreaterThan;
 import static com.mongodb.ClusterFixture.serverVersionLessThan;
 import static org.junit.Assert.assertEquals;
@@ -51,6 +57,18 @@ public class CrudTest extends DatabaseTestCase {
         this.description = description;
         this.data = data;
         this.definition = definition;
+
+        try {
+                StackdriverTraceExporter.createAndRegister(
+                                StackdriverTraceConfiguration.builder()
+                                .setProjectId("census-demos")
+                                .build());
+        } catch (Exception e) {
+        } finally {
+                TraceConfig traceConfig = Tracing.getTraceConfig();
+                traceConfig.updateActiveTraceParams(
+                                traceConfig.getActiveTraceParams().toBuilder().setSampler(Samplers.alwaysSample()).build());
+        }
     }
 
     @Before

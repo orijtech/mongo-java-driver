@@ -22,6 +22,9 @@ import com.mongodb.MongoDriverInformation;
 import com.mongodb.lang.Nullable;
 import com.mongodb.client.internal.MongoClientImpl;
 
+import io.opencensus.common.Scope;
+import io.opencensus.trace.Tracer;
+import io.opencensus.trace.Tracing;
 
 /**
  * A factory for {@link MongoClient} instances.  Use of this class is now the recommended way to connect to MongoDB via the Java driver.
@@ -30,6 +33,8 @@ import com.mongodb.client.internal.MongoClientImpl;
  * @since 3.7
  */
 public final class MongoClients {
+
+    private static final Tracer TRACER = Tracing.getTracer();
 
     /**
      * Creates a new client with the default connection string "mongodb://localhost".
@@ -109,7 +114,13 @@ public final class MongoClients {
      * @return the client
      */
     public static MongoClient create(final MongoClientSettings settings, @Nullable final MongoDriverInformation mongoDriverInformation) {
-        return new MongoClientImpl(settings, mongoDriverInformation);
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.MongoClients.create").startScopedSpan();
+
+        try {
+            return new MongoClientImpl(settings, mongoDriverInformation);
+        } finally {
+            ss.close();
+        }
     }
 
     private MongoClients() {
