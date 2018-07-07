@@ -51,6 +51,12 @@ import static com.mongodb.assertions.Assertions.notNull;
 import static java.lang.String.format;
 import static org.bson.codecs.configuration.CodecRegistries.fromRegistries;
 
+import io.opencensus.common.Scope;
+import io.opencensus.trace.AttributeValue;
+import io.opencensus.trace.Status;
+import io.opencensus.trace.Tracer;
+import io.opencensus.trace.Tracing;
+
 final class GridFSBucketImpl implements GridFSBucket {
     private static final int DEFAULT_CHUNKSIZE_BYTES = 255 * 1024;
     private final String bucketName;
@@ -59,6 +65,7 @@ final class GridFSBucketImpl implements GridFSBucket {
     private final MongoCollection<Document> chunksCollection;
     private final boolean disableMD5;
     private volatile boolean checkedIndexes;
+    private static final Tracer TRACER = Tracing.getTracer();
 
     GridFSBucketImpl(final MongoDatabase database) {
         this(database, "fs");
@@ -91,17 +98,35 @@ final class GridFSBucketImpl implements GridFSBucket {
 
     @Override
     public ReadPreference getReadPreference() {
-        return filesCollection.getReadPreference();
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.gridfs.GridFSBucketImpl.getReadPreference").startScopedSpan();
+
+        try {
+            return filesCollection.getReadPreference();
+        } finally {
+            ss.close();
+        }
     }
 
     @Override
     public WriteConcern getWriteConcern() {
-        return filesCollection.getWriteConcern();
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.gridfs.GridFSBucketImpl.getWriteConcern").startScopedSpan();
+
+        try {
+            return filesCollection.getWriteConcern();
+        } finally {
+            ss.close();
+        }
     }
 
     @Override
     public ReadConcern getReadConcern() {
-        return filesCollection.getReadConcern();
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.gridfs.GridFSBucketImpl.getReadConcern").startScopedSpan();
+
+        try {
+            return filesCollection.getReadConcern();
+        } finally {
+            ss.close();
+        }
     }
 
     @Override
@@ -181,18 +206,30 @@ final class GridFSBucketImpl implements GridFSBucket {
     @Override
     public GridFSUploadStream openUploadStream(final ClientSession clientSession, final BsonValue id, final String filename,
                                                final GridFSUploadOptions options) {
-        notNull("clientSession", clientSession);
-        return createGridFSUploadStream(clientSession, id, filename, options);
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.gridfs.GridFSBucketImpl.openUploadStream").startScopedSpan();
+
+        try {
+            notNull("clientSession", clientSession);
+            return createGridFSUploadStream(clientSession, id, filename, options);
+        } finally {
+            ss.close();
+        }
     }
 
     private GridFSUploadStream createGridFSUploadStream(@Nullable final ClientSession clientSession, final BsonValue id,
                                                         final String filename, final GridFSUploadOptions options) {
-        notNull("options", options);
-        Integer chunkSizeBytes = options.getChunkSizeBytes();
-        int chunkSize = chunkSizeBytes == null ? this.chunkSizeBytes : chunkSizeBytes;
-        checkCreateIndex(clientSession);
-        return new GridFSUploadStreamImpl(clientSession, filesCollection, chunksCollection, id, filename, chunkSize,
-                disableMD5, options.getMetadata());
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.gridfs.GridFSBucketImpl.createGridFSUploadStream").startScopedSpan();
+
+        try {
+            notNull("options", options);
+            Integer chunkSizeBytes = options.getChunkSizeBytes();
+            int chunkSize = chunkSizeBytes == null ? this.chunkSizeBytes : chunkSizeBytes;
+            checkCreateIndex(clientSession);
+            return new GridFSUploadStreamImpl(clientSession, filesCollection, chunksCollection, id, filename, chunkSize,
+                    disableMD5, options.getMetadata());
+        } finally {
+            ss.close();
+        }
     }
 
     @Override
@@ -239,25 +276,41 @@ final class GridFSBucketImpl implements GridFSBucket {
     @Override
     public void uploadFromStream(final ClientSession clientSession, final BsonValue id, final String filename, final InputStream source,
                                  final GridFSUploadOptions options) {
-        notNull("clientSession", clientSession);
-        executeUploadFromStream(clientSession, id, filename, source, options);
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.gridfs.GridFSBucketImpl.uploadFromStream").startScopedSpan();
+
+        try {
+            notNull("clientSession", clientSession);
+            executeUploadFromStream(clientSession, id, filename, source, options);
+        } finally {
+            ss.close();
+        }
     }
 
     private void executeUploadFromStream(@Nullable final ClientSession clientSession, final BsonValue id, final String filename,
                                          final InputStream source, final GridFSUploadOptions options) {
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.gridfs.GridFSBucketImpl.uploadFromStream").startScopedSpan();
+
         GridFSUploadStream uploadStream = createGridFSUploadStream(clientSession, id, filename, options);
         Integer chunkSizeBytes = options.getChunkSizeBytes();
         int chunkSize = chunkSizeBytes == null ? this.chunkSizeBytes : chunkSizeBytes;
         byte[] buffer = new byte[chunkSize];
+        TRACER.getCurrentSpan().putAttribute("chunkSize", AttributeValue.longAttributeValue(chunkSize));
         int len;
         try {
             while ((len = source.read(buffer)) != -1) {
+                TRACER.getCurrentSpan().addAnnotation("writingStream");
+                TRACER.getCurrentSpan().putAttribute("byte_len", AttributeValue.longAttributeValue(len));
                 uploadStream.write(buffer, 0, len);
             }
+            TRACER.getCurrentSpan().addAnnotation("Closing the uploadStream");
             uploadStream.close();
         } catch (IOException e) {
             uploadStream.abort();
+            TRACER.getCurrentSpan().addAnnotation("Encountered an IOException");
+            TRACER.getCurrentSpan().setStatus(Status.UNKNOWN.withDescription(e.toString()));
             throw new MongoGridFSException("IOException when reading from the InputStream", e);
+        } finally {
+            ss.close();
         }
     }
 
@@ -288,180 +341,361 @@ final class GridFSBucketImpl implements GridFSBucket {
 
     @Override
     public GridFSDownloadStream openDownloadStream(final ClientSession clientSession, final BsonValue id) {
-        notNull("clientSession", clientSession);
-        return createGridFSDownloadStream(clientSession, getFileInfoById(clientSession, id));
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.gridfs.GridFSBucketImpl.openDownloadStream").startScopedSpan();
+
+        try {
+            notNull("clientSession", clientSession);
+            return createGridFSDownloadStream(clientSession, getFileInfoById(clientSession, id));
+        } finally {
+            ss.close();
+        }
     }
 
     @Override
     public GridFSDownloadStream openDownloadStream(final ClientSession clientSession, final String filename) {
-        return openDownloadStream(clientSession, filename, new GridFSDownloadOptions());
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.gridfs.GridFSBucketImpl.openDownloadStream").startScopedSpan();
+
+        try {
+            return openDownloadStream(clientSession, filename, new GridFSDownloadOptions());
+        } finally {
+            ss.close();
+        }
     }
 
     @Override
     public GridFSDownloadStream openDownloadStream(final ClientSession clientSession, final String filename,
                                                    final GridFSDownloadOptions options) {
-        notNull("clientSession", clientSession);
-        return createGridFSDownloadStream(clientSession, getFileByName(clientSession, filename, options));
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.gridfs.GridFSBucketImpl.openDownloadStream").startScopedSpan();
+
+        try {
+            notNull("clientSession", clientSession);
+            return createGridFSDownloadStream(clientSession, getFileByName(clientSession, filename, options));
+        } finally {
+            ss.close();
+        }
     }
 
     private GridFSDownloadStream createGridFSDownloadStream(@Nullable final ClientSession clientSession, final GridFSFile gridFSFile) {
-        return new GridFSDownloadStreamImpl(clientSession, gridFSFile, chunksCollection);
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.gridfs.GridFSBucketImpl.createGridFSDownloadStream").startScopedSpan();
+
+        try {
+            return new GridFSDownloadStreamImpl(clientSession, gridFSFile, chunksCollection);
+        } finally {
+            ss.close();
+        }
     }
 
     @Override
     public void downloadToStream(final ObjectId id, final OutputStream destination) {
-        downloadToStream(new BsonObjectId(id), destination);
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.gridfs.GridFSBucketImpl.downloadToStream").startScopedSpan();
+
+        try {
+            downloadToStream(new BsonObjectId(id), destination);
+        } finally {
+            ss.close();
+        }
     }
 
     @Override
     public void downloadToStream(final BsonValue id, final OutputStream destination) {
-        downloadToStream(openDownloadStream(id), destination);
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.gridfs.GridFSBucketImpl.downloadToStream").startScopedSpan();
+
+        try {
+            downloadToStream(openDownloadStream(id), destination);
+        } finally {
+            ss.close();
+        }
     }
 
     @Override
     public void downloadToStream(final String filename, final OutputStream destination) {
-        downloadToStream(filename, destination, new GridFSDownloadOptions());
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.gridfs.GridFSBucketImpl.downloadToStream").startScopedSpan();
+
+        try {
+            downloadToStream(filename, destination, new GridFSDownloadOptions());
+        } finally {
+            ss.close();
+        }
     }
 
     @Override
     public void downloadToStream(final String filename, final OutputStream destination, final GridFSDownloadOptions options) {
-        downloadToStream(openDownloadStream(filename, options), destination);
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.gridfs.GridFSBucketImpl.downloadToStream").startScopedSpan();
+
+        try {
+            downloadToStream(openDownloadStream(filename, options), destination);
+        } finally {
+            ss.close();
+        }
     }
 
     @Override
     public void downloadToStream(final ClientSession clientSession, final ObjectId id, final OutputStream destination) {
-        downloadToStream(clientSession, new BsonObjectId(id), destination);
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.gridfs.GridFSBucketImpl.downloadToStream").startScopedSpan();
+
+        try {
+            downloadToStream(clientSession, new BsonObjectId(id), destination);
+        } finally {
+            ss.close();
+        }
     }
 
     @Override
     public void downloadToStream(final ClientSession clientSession, final BsonValue id, final OutputStream destination) {
-        notNull("clientSession", clientSession);
-        downloadToStream(openDownloadStream(clientSession, id), destination);
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.gridfs.GridFSBucketImpl.downloadToStream").startScopedSpan();
+
+        try {
+            notNull("clientSession", clientSession);
+            downloadToStream(openDownloadStream(clientSession, id), destination);
+        } finally {
+            ss.close();
+        }
     }
 
     @Override
     public void downloadToStream(final ClientSession clientSession, final String filename, final OutputStream destination) {
-        downloadToStream(clientSession, filename, destination, new GridFSDownloadOptions());
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.gridfs.GridFSBucketImpl.downloadToStream").startScopedSpan();
+
+        try {
+            downloadToStream(clientSession, filename, destination, new GridFSDownloadOptions());
+        } finally {
+            ss.close();
+        }
     }
 
     @Override
     public void downloadToStream(final ClientSession clientSession, final String filename, final OutputStream destination,
                                  final GridFSDownloadOptions options) {
-        notNull("clientSession", clientSession);
-        downloadToStream(openDownloadStream(clientSession, filename, options), destination);
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.gridfs.GridFSBucketImpl.downloadToStream").startScopedSpan();
+
+        try {
+            notNull("clientSession", clientSession);
+            downloadToStream(openDownloadStream(clientSession, filename, options), destination);
+        } finally {
+            ss.close();
+        }
     }
 
     @Override
     public GridFSFindIterable find() {
-        return createGridFSFindIterable(null, null);
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.gridfs.GridFSBucketImpl.find").startScopedSpan();
+
+        try {
+            return createGridFSFindIterable(null, null);
+        } finally {
+            ss.close();
+        }
     }
 
     @Override
     public GridFSFindIterable find(final Bson filter) {
-        notNull("filter", filter);
-        return createGridFSFindIterable(null, filter);
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.gridfs.GridFSBucketImpl.find").startScopedSpan();
+
+        try {
+            notNull("filter", filter);
+            return createGridFSFindIterable(null, filter);
+        } finally {
+            ss.close();
+        }
     }
 
     @Override
     public GridFSFindIterable find(final ClientSession clientSession) {
-        notNull("clientSession", clientSession);
-        return createGridFSFindIterable(clientSession, null);
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.gridfs.GridFSBucketImpl.find").startScopedSpan();
+
+        try {
+            notNull("clientSession", clientSession);
+            return createGridFSFindIterable(clientSession, null);
+        } finally {
+            ss.close();
+        }
     }
 
     @Override
     public GridFSFindIterable find(final ClientSession clientSession, final Bson filter) {
-        notNull("clientSession", clientSession);
-        notNull("filter", filter);
-        return createGridFSFindIterable(clientSession, filter);
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.gridfs.GridFSBucketImpl.find").startScopedSpan();
+
+        try {
+            notNull("clientSession", clientSession);
+            notNull("filter", filter);
+            return createGridFSFindIterable(clientSession, filter);
+        } finally {
+            ss.close();
+        }
     }
 
     private GridFSFindIterable createGridFSFindIterable(@Nullable final ClientSession clientSession, @Nullable final Bson filter) {
-        return new GridFSFindIterableImpl(createFindIterable(clientSession, filter));
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.gridfs.GridFSBucketImpl.createGridFSFindIterable").startScopedSpan();
+
+        try {
+            return new GridFSFindIterableImpl(createFindIterable(clientSession, filter));
+        } finally {
+            ss.close();
+        }
     }
 
     @Override
     public void delete(final ObjectId id) {
-        delete(new BsonObjectId(id));
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.gridfs.GridFSBucketImpl.delete").startScopedSpan();
+
+        try {
+            delete(new BsonObjectId(id));
+        } finally {
+            ss.close();
+        }
     }
 
     @Override
     public void delete(final BsonValue id) {
-        executeDelete(null, id);
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.gridfs.GridFSBucketImpl.delete").startScopedSpan();
+
+        try {
+            executeDelete(null, id);
+        } finally {
+            ss.close();
+        }
     }
 
     @Override
     public void delete(final ClientSession clientSession, final ObjectId id) {
-        delete(clientSession, new BsonObjectId(id));
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.gridfs.GridFSBucketImpl.delete").startScopedSpan();
+
+        try {
+            delete(clientSession, new BsonObjectId(id));
+        } finally {
+            ss.close();
+        }
     }
 
     @Override
     public void delete(final ClientSession clientSession, final BsonValue id) {
-        notNull("clientSession", clientSession);
-        executeDelete(clientSession, id);
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.gridfs.GridFSBucketImpl.delete").startScopedSpan();
+
+        try {
+            notNull("clientSession", clientSession);
+            executeDelete(clientSession, id);
+        } finally {
+            ss.close();
+        }
     }
 
     private void executeDelete(@Nullable final ClientSession clientSession, final BsonValue id) {
-        DeleteResult result;
-        if (clientSession != null) {
-            result = filesCollection.deleteOne(clientSession, new BsonDocument("_id", id));
-            chunksCollection.deleteMany(clientSession, new BsonDocument("files_id", id));
-        } else {
-            result = filesCollection.deleteOne(new BsonDocument("_id", id));
-            chunksCollection.deleteMany(new BsonDocument("files_id", id));
-        }
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.gridfs.GridFSBucketImpl.executeDelete").startScopedSpan();
 
-        if (result.wasAcknowledged() && result.getDeletedCount() == 0) {
-            throw new MongoGridFSException(format("No file found with the id: %s", id));
+        try {
+            DeleteResult result;
+            if (clientSession != null) {
+                TRACER.getCurrentSpan().addAnnotation("Client session is non-nil");
+                result = filesCollection.deleteOne(clientSession, new BsonDocument("_id", id));
+                chunksCollection.deleteMany(clientSession, new BsonDocument("files_id", id));
+            } else {
+                TRACER.getCurrentSpan().addAnnotation("Client session is nil");
+                result = filesCollection.deleteOne(new BsonDocument("_id", id));
+                chunksCollection.deleteMany(new BsonDocument("files_id", id));
+            }
+
+            if (result.wasAcknowledged() && result.getDeletedCount() == 0) {
+                TRACER.getCurrentSpan().addAnnotation("No file found");
+                String msg = format("No file found with the id: %s", id);
+                TRACER.getCurrentSpan().setStatus(Status.NOT_FOUND.withDescription(msg));
+                throw new MongoGridFSException(msg);
+            }
+        } finally {
+            ss.close();
         }
     }
 
     @Override
     public void rename(final ObjectId id, final String newFilename) {
-        rename(new BsonObjectId(id), newFilename);
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.gridfs.GridFSBucketImpl.rename").startScopedSpan();
+
+        try {
+            rename(new BsonObjectId(id), newFilename);
+        } finally {
+            ss.close();
+        }
     }
 
     @Override
     public void rename(final BsonValue id, final String newFilename) {
-        executeRename(null, id, newFilename);
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.gridfs.GridFSBucketImpl.rename").startScopedSpan();
+
+        try {
+            executeRename(null, id, newFilename);
+        } finally {
+            ss.close();
+        }
     }
 
     @Override
     public void rename(final ClientSession clientSession, final ObjectId id, final String newFilename) {
-        rename(clientSession, new BsonObjectId(id), newFilename);
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.gridfs.GridFSBucketImpl.rename").startScopedSpan();
+
+        try {
+            rename(clientSession, new BsonObjectId(id), newFilename);
+        } finally {
+            ss.close();
+        }
     }
 
     @Override
     public void rename(final ClientSession clientSession, final BsonValue id, final String newFilename) {
-        notNull("clientSession", clientSession);
-        executeRename(clientSession, id, newFilename);
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.gridfs.GridFSBucketImpl.rename").startScopedSpan();
+
+        try {
+            notNull("clientSession", clientSession);
+            executeRename(clientSession, id, newFilename);
+        } finally {
+            ss.close();
+        }
     }
 
     private void executeRename(@Nullable final ClientSession clientSession, final BsonValue id, final String newFilename) {
-        UpdateResult updateResult;
-        if (clientSession != null) {
-            updateResult = filesCollection.updateOne(clientSession, new BsonDocument("_id", id),
-                    new BsonDocument("$set", new BsonDocument("filename", new BsonString(newFilename))));
-        } else {
-            updateResult = filesCollection.updateOne(new BsonDocument("_id", id),
-                    new BsonDocument("$set", new BsonDocument("filename", new BsonString(newFilename))));
-        }
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.gridfs.GridFSBucketImpl.executeRename").startScopedSpan();
 
-        if (updateResult.wasAcknowledged() && updateResult.getMatchedCount() == 0) {
-            throw new MongoGridFSException(format("No file found with the id: %s", id));
+        try {
+            UpdateResult updateResult;
+            if (clientSession != null) {
+                updateResult = filesCollection.updateOne(clientSession, new BsonDocument("_id", id),
+                        new BsonDocument("$set", new BsonDocument("filename", new BsonString(newFilename))));
+            } else {
+                updateResult = filesCollection.updateOne(new BsonDocument("_id", id),
+                        new BsonDocument("$set", new BsonDocument("filename", new BsonString(newFilename))));
+            }
+
+            if (updateResult.wasAcknowledged() && updateResult.getMatchedCount() == 0) {
+                String msg = format("No file found with the id: %s", id);
+                TRACER.getCurrentSpan().setStatus(Status.NOT_FOUND.withDescription(msg));
+                throw new MongoGridFSException(msg);
+            }
+        } finally {
+            ss.close();
         }
     }
 
     @Override
     public void drop() {
-        filesCollection.drop();
-        chunksCollection.drop();
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.gridfs.GridFSBucketImpl.drop").startScopedSpan();
+
+        try {
+            filesCollection.drop();
+            chunksCollection.drop();
+        } finally {
+            ss.close();
+        }
     }
 
     @Override
     public void drop(final ClientSession clientSession) {
-        notNull("clientSession", clientSession);
-        filesCollection.drop(clientSession);
-        chunksCollection.drop(clientSession);
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.gridfs.GridFSBucketImpl.drop").startScopedSpan();
+
+        try {
+            notNull("clientSession", clientSession);
+            filesCollection.drop(clientSession);
+            chunksCollection.drop(clientSession);
+        } finally {
+            ss.close();
+        }
     }
 
     @Override
@@ -495,111 +729,188 @@ final class GridFSBucketImpl implements GridFSBucket {
     }
 
     private static MongoCollection<GridFSFile> getFilesCollection(final MongoDatabase database, final String bucketName) {
-        return database.getCollection(bucketName + ".files", GridFSFile.class).withCodecRegistry(
-                fromRegistries(database.getCodecRegistry(), MongoClientSettings.getDefaultCodecRegistry())
-        );
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.gridfs.GridFSBucketImpl.getFilesCollection").startScopedSpan();
+
+        try {
+            return database.getCollection(bucketName + ".files", GridFSFile.class).withCodecRegistry(
+                    fromRegistries(database.getCodecRegistry(), MongoClientSettings.getDefaultCodecRegistry())
+            );
+        } finally {
+            ss.close();
+        }
     }
 
     private static MongoCollection<Document> getChunksCollection(final MongoDatabase database, final String bucketName) {
-        return database.getCollection(bucketName + ".chunks").withCodecRegistry(MongoClientSettings.getDefaultCodecRegistry());
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.gridfs.GridFSBucketImpl.getChunksCollection").startScopedSpan();
+
+        try {
+            return database.getCollection(bucketName + ".chunks").withCodecRegistry(MongoClientSettings.getDefaultCodecRegistry());
+        } finally {
+            ss.close();
+        }
     }
 
     private void checkCreateIndex(@Nullable final ClientSession clientSession) {
-        if (!checkedIndexes) {
-            if (collectionIsEmpty(clientSession, filesCollection.withDocumentClass(Document.class).withReadPreference(primary()))) {
-                Document filesIndex = new Document("filename", 1).append("uploadDate", 1);
-                if (!hasIndex(clientSession, filesCollection.withReadPreference(primary()), filesIndex)) {
-                    createIndex(clientSession, filesCollection, filesIndex, new IndexOptions());
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.gridfs.GridFSBucketImpl.checkCreateIndex").startScopedSpan();
+
+        try {
+            TRACER.getCurrentSpan().putAttribute("checkedIndexes", AttributeValue.booleanAttributeValue(checkedIndexes));
+
+            if (!checkedIndexes) {
+                TRACER.getCurrentSpan().addAnnotation("Unchecked indexes");
+                if (collectionIsEmpty(clientSession, filesCollection.withDocumentClass(Document.class).withReadPreference(primary()))) {
+                    TRACER.getCurrentSpan().addAnnotation("Collection is empty");
+                    Document filesIndex = new Document("filename", 1).append("uploadDate", 1);
+                    if (!hasIndex(clientSession, filesCollection.withReadPreference(primary()), filesIndex)) {
+                        TRACER.getCurrentSpan().addAnnotation("Creating the filesIndex");
+                        createIndex(clientSession, filesCollection, filesIndex, new IndexOptions());
+                    }
+                    Document chunksIndex = new Document("files_id", 1).append("n", 1);
+                    if (!hasIndex(clientSession, chunksCollection.withReadPreference(primary()), chunksIndex)) {
+                        TRACER.getCurrentSpan().addAnnotation("Creating the chunksIndex");
+                        createIndex(clientSession, chunksCollection, chunksIndex, new IndexOptions().unique(true));
+                    }
                 }
-                Document chunksIndex = new Document("files_id", 1).append("n", 1);
-                if (!hasIndex(clientSession, chunksCollection.withReadPreference(primary()), chunksIndex)) {
-                    createIndex(clientSession, chunksCollection, chunksIndex, new IndexOptions().unique(true));
-                }
+                checkedIndexes = true;
             }
-            checkedIndexes = true;
+        } finally {
+            ss.close();
         }
     }
 
     private <T> boolean collectionIsEmpty(@Nullable final ClientSession clientSession, final MongoCollection<T> collection) {
-        if (clientSession != null) {
-            return collection.find(clientSession).projection(new Document("_id", 1)).first() == null;
-        } else {
-            return collection.find().projection(new Document("_id", 1)).first() == null;
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.gridfs.GridFSBucketImpl.collectionIsEmpty").startScopedSpan();
+
+        try {
+            if (clientSession != null) {
+                TRACER.getCurrentSpan().addAnnotation("ClientSession is non-null");
+                return collection.find(clientSession).projection(new Document("_id", 1)).first() == null;
+            } else {
+                TRACER.getCurrentSpan().addAnnotation("ClientSession is null so creating a projection then checking it");
+                return collection.find().projection(new Document("_id", 1)).first() == null;
+            }
+        } finally {
+            ss.close();
         }
     }
 
     private <T> boolean hasIndex(@Nullable final ClientSession clientSession, final MongoCollection<T> collection, final Document index) {
-        boolean hasIndex = false;
-        ListIndexesIterable<Document> listIndexesIterable;
-        if (clientSession != null) {
-            listIndexesIterable = collection.listIndexes(clientSession);
-        } else {
-            listIndexesIterable = collection.listIndexes();
-        }
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.gridfs.GridFSBucketImpl.hasIndex").startScopedSpan();
 
-        ArrayList<Document> indexes = listIndexesIterable.into(new ArrayList<Document>());
-        for (Document indexDoc : indexes) {
-            if (indexDoc.get("key", Document.class).equals(index)) {
-                hasIndex = true;
-                break;
+        try {
+            boolean hasIndex = false;
+            ListIndexesIterable<Document> listIndexesIterable;
+            if (clientSession != null) {
+                TRACER.getCurrentSpan().addAnnotation("ClientSession is non-null");
+                listIndexesIterable = collection.listIndexes(clientSession);
+            } else {
+                TRACER.getCurrentSpan().addAnnotation("ClientSession is null");
+                listIndexesIterable = collection.listIndexes();
             }
+
+            ArrayList<Document> indexes = listIndexesIterable.into(new ArrayList<Document>());
+            for (Document indexDoc : indexes) {
+                if (indexDoc.get("key", Document.class).equals(index)) {
+                    hasIndex = true;
+                    break;
+                }
+            }
+            TRACER.getCurrentSpan().putAttribute("hasIndex", AttributeValue.booleanAttributeValue(hasIndex));
+            return hasIndex;
+        } finally {
+            ss.close();
         }
-        return hasIndex;
     }
 
     private <T> void createIndex(@Nullable final ClientSession clientSession, final MongoCollection<T> collection, final Document index,
                                  final IndexOptions indexOptions) {
-       if (clientSession != null) {
-           collection.createIndex(clientSession, index, indexOptions);
-       } else {
-           collection.createIndex(index, indexOptions);
-       }
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.gridfs.GridFSBucketImpl.createIndex").startScopedSpan();
+
+        try {
+            if (clientSession != null) {
+                TRACER.getCurrentSpan().addAnnotation("ClientSession is non-null");
+                collection.createIndex(clientSession, index, indexOptions);
+            } else {
+                TRACER.getCurrentSpan().addAnnotation("ClientSession is null");
+                collection.createIndex(index, indexOptions);
+            }
+        } finally {
+            ss.close();
+        }
     }
 
     private GridFSFile getFileByName(@Nullable final ClientSession clientSession, final String filename,
                                      final GridFSDownloadOptions options) {
-        int revision = options.getRevision();
-        int skip;
-        int sort;
-        if (revision >= 0) {
-            skip = revision;
-            sort = 1;
-        } else {
-            skip = (-revision) - 1;
-            sort = -1;
-        }
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.gridfs.GridFSBucketImpl.getFileByName").startScopedSpan();
 
-        GridFSFile fileInfo = createGridFSFindIterable(clientSession, new Document("filename", filename)).skip(skip)
-                .sort(new Document("uploadDate", sort)).first();
-        if (fileInfo == null) {
-            throw new MongoGridFSException(format("No file found with the filename: %s and revision: %s", filename, revision));
+        try {
+            int revision = options.getRevision();
+            int skip;
+            int sort;
+            if (revision >= 0) {
+                skip = revision;
+                sort = 1;
+            } else {
+                skip = (-revision) - 1;
+                sort = -1;
+            }
+
+            TRACER.getCurrentSpan().putAttribute("revision", AttributeValue.longAttributeValue(revision));
+            TRACER.getCurrentSpan().putAttribute("sort", AttributeValue.longAttributeValue(sort));
+            TRACER.getCurrentSpan().putAttribute("skip", AttributeValue.longAttributeValue(skip));
+
+            GridFSFile fileInfo = createGridFSFindIterable(clientSession, new Document("filename", filename)).skip(skip)
+                    .sort(new Document("uploadDate", sort)).first();
+            if (fileInfo == null) {
+                String msg = format("No file found with the filename: %s and revision: %s", filename, revision);
+                TRACER.getCurrentSpan().setStatus(Status.NOT_FOUND.withDescription(msg));
+                throw new MongoGridFSException(msg);
+            }
+            return fileInfo;
+        } finally {
+            ss.close();
         }
-        return fileInfo;
     }
 
     private GridFSFile getFileInfoById(@Nullable final ClientSession clientSession, final BsonValue id) {
-        notNull("id", id);
-        GridFSFile fileInfo = createFindIterable(clientSession, new Document("_id", id)).first();
-        if (fileInfo == null) {
-            throw new MongoGridFSException(format("No file found with the id: %s", id));
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.gridfs.GridFSBucketImpl.getFileInfoById").startScopedSpan();
+
+        try {
+            notNull("id", id);
+            GridFSFile fileInfo = createFindIterable(clientSession, new Document("_id", id)).first();
+            if (fileInfo == null) {
+                String msg = format("No file found with the id: %s", id);
+                TRACER.getCurrentSpan().setStatus(Status.NOT_FOUND.withDescription(msg));
+                throw new MongoGridFSException(msg);
+            }
+            return fileInfo;
+        } finally {
+            ss.close();
         }
-        return fileInfo;
     }
 
     private FindIterable<GridFSFile> createFindIterable(@Nullable final ClientSession clientSession, @Nullable final Bson filter) {
-        FindIterable<GridFSFile> findIterable;
-        if (clientSession != null) {
-            findIterable = filesCollection.find(clientSession);
-        } else {
-            findIterable = filesCollection.find();
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.gridfs.GridFSBucketImpl.createFindIterable").startScopedSpan();
+
+        try {
+            FindIterable<GridFSFile> findIterable;
+            if (clientSession != null) {
+                findIterable = filesCollection.find(clientSession);
+            } else {
+                findIterable = filesCollection.find();
+            }
+            if (filter != null) {
+                findIterable = findIterable.filter(filter);
+            }
+            return findIterable;
+        } finally {
+            ss.close();
         }
-        if (filter != null) {
-            findIterable = findIterable.filter(filter);
-        }
-        return findIterable;
     }
 
     private void downloadToStream(final GridFSDownloadStream downloadStream, final OutputStream destination) {
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.gridfs.GridFSBucketImpl.downloadToStream").startScopedSpan();
+
         byte[] buffer = new byte[downloadStream.getGridFSFile().getChunkSize()];
         int len;
         MongoGridFSException savedThrowable = null;
@@ -617,8 +928,14 @@ final class GridFSBucketImpl implements GridFSBucket {
             } catch (Exception e) {
                 // Do nothing
             }
-            if (savedThrowable != null) {
-                throw savedThrowable;
+
+            try {
+                if (savedThrowable != null) {
+                    TRACER.getCurrentSpan().setStatus(Status.UNKNOWN.withDescription(savedThrowable.toString()));
+                    throw savedThrowable;
+                }
+            } finally {
+                ss.close();
             }
         }
     }

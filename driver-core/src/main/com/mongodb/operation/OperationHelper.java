@@ -51,6 +51,10 @@ import org.bson.BsonDocument;
 import org.bson.BsonInt64;
 import org.bson.codecs.Decoder;
 
+import io.opencensus.common.Scope;
+import io.opencensus.trace.Tracer;
+import io.opencensus.trace.Tracing;
+
 import java.util.Collections;
 import java.util.List;
 
@@ -62,6 +66,7 @@ import static java.util.Collections.singletonList;
 
 final class OperationHelper {
     public static final Logger LOGGER = Loggers.getLogger("operation");
+    private static final Tracer TRACER = Tracing.getTracer();
 
     interface CallableWithConnection<T> {
         T call(Connection connection);
@@ -80,30 +85,48 @@ final class OperationHelper {
     }
 
     static void validateReadConcern(final Connection connection, final ReadConcern readConcern) {
-        if (!ServerVersionHelper.serverIsAtLeastVersionThreeDotTwo(connection.getDescription()) && !readConcern.isServerDefault()) {
-            throw new IllegalArgumentException(format("ReadConcern not supported by server version: %s",
-                    connection.getDescription().getServerVersion()));
+        Scope ss = TRACER.spanBuilder("com.mongodb.operation.OperationHelper.validateReadConcern").startScopedSpan();
+
+        try {
+            if (!ServerVersionHelper.serverIsAtLeastVersionThreeDotTwo(connection.getDescription()) && !readConcern.isServerDefault()) {
+                throw new IllegalArgumentException(format("ReadConcern not supported by server version: %s",
+                        connection.getDescription().getServerVersion()));
+            }
+        } finally {
+            ss.close();
         }
     }
 
     static void validateReadConcern(final AsyncConnection connection, final ReadConcern readConcern,
                                     final AsyncCallableWithConnection callable) {
-        Throwable throwable = null;
-        if (!ServerVersionHelper.serverIsAtLeastVersionThreeDotTwo(connection.getDescription()) && !readConcern.isServerDefault()) {
-            throwable = new IllegalArgumentException(format("ReadConcern not supported by server version: %s",
-                    connection.getDescription().getServerVersion()));
+        Scope ss = TRACER.spanBuilder("com.mongodb.operation.OperationHelper.validateReadConcern").startScopedSpan();
+
+        try {
+            Throwable throwable = null;
+            if (!ServerVersionHelper.serverIsAtLeastVersionThreeDotTwo(connection.getDescription()) && !readConcern.isServerDefault()) {
+                throwable = new IllegalArgumentException(format("ReadConcern not supported by server version: %s",
+                        connection.getDescription().getServerVersion()));
+            }
+            callable.call(connection, throwable);
+        } finally {
+            ss.close();
         }
-        callable.call(connection, throwable);
     }
 
     static void validateReadConcern(final AsyncConnectionSource source, final AsyncConnection connection, final ReadConcern readConcern,
                                     final AsyncCallableWithConnectionAndSource callable) {
-        validateReadConcern(connection, readConcern, new AsyncCallableWithConnection(){
-            @Override
-            public void call(final AsyncConnection connection, final Throwable t) {
-                callable.call(source, connection, t);
-            }
-        });
+        Scope ss = TRACER.spanBuilder("com.mongodb.operation.OperationHelper.validateReadConcern").startScopedSpan();
+
+        try {
+            validateReadConcern(connection, readConcern, new AsyncCallableWithConnection(){
+                @Override
+                public void call(final AsyncConnection connection, final Throwable t) {
+                    callable.call(source, connection, t);
+                }
+            });
+        } finally {
+            ss.close();
+        }
     }
 
     static void validateCollation(final Connection connection, final Collation collation) {

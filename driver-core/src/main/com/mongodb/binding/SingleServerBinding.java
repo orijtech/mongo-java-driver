@@ -28,6 +28,10 @@ import com.mongodb.session.SessionContext;
 
 import static com.mongodb.assertions.Assertions.notNull;
 
+import io.opencensus.common.Scope;
+import io.opencensus.trace.Tracer;
+import io.opencensus.trace.Tracing;
+
 /**
  * A simple binding where all connection sources are bound to the server specified in the constructor.
  *
@@ -37,6 +41,7 @@ public class SingleServerBinding extends AbstractReferenceCounted implements Rea
     private final Cluster cluster;
     private final ServerAddress serverAddress;
     private final ReadPreference readPreference;
+    private static final Tracer TRACER = Tracing.getTracer();
 
     /**
      * Creates an instance, defaulting to {@link com.mongodb.ReadPreference#primary()} for reads.
@@ -61,7 +66,13 @@ public class SingleServerBinding extends AbstractReferenceCounted implements Rea
 
     @Override
     public ConnectionSource getWriteConnectionSource() {
-        return new SingleServerBindingConnectionSource();
+        Scope ss = TRACER.spanBuilder("com.mongodb.binding.SingleServerBinding.getWriteConnectionSource").startScopedSpan();
+
+        try {
+            return new SingleServerBindingConnectionSource();
+        } finally {
+            ss.close();
+        }
     }
 
     @Override
@@ -71,7 +82,13 @@ public class SingleServerBinding extends AbstractReferenceCounted implements Rea
 
     @Override
     public ConnectionSource getReadConnectionSource() {
-        return new SingleServerBindingConnectionSource();
+        Scope ss = TRACER.spanBuilder("com.mongodb.binding.SingleServerBinding.getReadConnectionSource").startScopedSpan();
+
+        try {
+            return new SingleServerBindingConnectionSource();
+        } finally {
+            ss.close();
+        }
     }
 
     @Override
@@ -81,8 +98,14 @@ public class SingleServerBinding extends AbstractReferenceCounted implements Rea
 
     @Override
     public SingleServerBinding retain() {
-        super.retain();
-        return this;
+        Scope ss = TRACER.spanBuilder("com.mongodb.binding.SingleServerBinding.retain").startScopedSpan();
+
+        try {
+            super.retain();
+            return this;
+        } finally {
+            ss.close();
+        }
     }
 
     private final class SingleServerBindingConnectionSource extends AbstractReferenceCounted implements ConnectionSource {
@@ -105,20 +128,41 @@ public class SingleServerBinding extends AbstractReferenceCounted implements Rea
 
         @Override
         public Connection getConnection() {
-            return cluster.selectServer(new ServerAddressSelector(serverAddress)).getConnection();
+            Scope ss = TRACER.spanBuilder("com.mongodb.binding.SingleServerBinding.SingleServerBindingConnection.getConnection")
+                             .startScopedSpan();
+
+            try {
+                return cluster.selectServer(new ServerAddressSelector(serverAddress)).getConnection();
+            } finally {
+                ss.close();
+            }
         }
 
         @Override
         public ConnectionSource retain() {
-            super.retain();
-            return this;
+            Scope ss = TRACER.spanBuilder("com.mongodb.binding.SingleServerBinding.SingleServerBindingConnection.retain")
+                             .startScopedSpan();
+
+            try {
+                super.retain();
+                return this;
+            } finally {
+                ss.close();
+            }
         }
 
         @Override
         public void release() {
-            super.release();
-            if (super.getCount() == 0) {
-                SingleServerBinding.this.release();
+            Scope ss = TRACER.spanBuilder("com.mongodb.binding.SingleServerBinding.SingleServerBindingConnection.release")
+                             .startScopedSpan();
+
+            try {
+                super.release();
+                if (super.getCount() == 0) {
+                    SingleServerBinding.this.release();
+                }
+            } finally {
+                ss.close();
             }
         }
     }

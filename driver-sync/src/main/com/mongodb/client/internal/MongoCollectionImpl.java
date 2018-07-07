@@ -62,6 +62,13 @@ import com.mongodb.internal.operation.SyncOperations;
 import com.mongodb.lang.Nullable;
 import com.mongodb.operation.RenameCollectionOperation;
 import com.mongodb.operation.WriteOperation;
+
+import io.opencensus.common.Scope;
+import io.opencensus.trace.AttributeValue;
+import io.opencensus.trace.Tracer;
+import io.opencensus.trace.Tracing;
+import io.opencensus.trace.Status;
+
 import org.bson.BsonDocument;
 import org.bson.BsonValue;
 import org.bson.Document;
@@ -90,6 +97,7 @@ class MongoCollectionImpl<TDocument> implements MongoCollection<TDocument> {
     private final ReadConcern readConcern;
     private final SyncOperations<TDocument> operations;
     private final OperationExecutor executor;
+    private static final Tracer TRACER = Tracing.getTracer();
 
     MongoCollectionImpl(final MongoNamespace namespace, final Class<TDocument> documentClass, final CodecRegistry codecRegistry,
                         final ReadPreference readPreference, final WriteConcern writeConcern, final boolean retryWrites,
@@ -198,8 +206,14 @@ class MongoCollectionImpl<TDocument> implements MongoCollection<TDocument> {
     @Override
     @Deprecated
     public long count(final ClientSession clientSession, final Bson filter, final CountOptions options) {
-        notNull("clientSession", clientSession);
-        return executeCount(clientSession, filter, options, CountStrategy.COMMAND);
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.internal.MongoCollectionImpl.count").startScopedSpan();
+
+        try {
+            notNull("clientSession", clientSession);
+            return executeCount(clientSession, filter, options, CountStrategy.COMMAND);
+        } finally {
+            ss.close();
+        }
     }
 
     @Override
@@ -229,8 +243,14 @@ class MongoCollectionImpl<TDocument> implements MongoCollection<TDocument> {
 
     @Override
     public long countDocuments(final ClientSession clientSession, final Bson filter, final CountOptions options) {
-        notNull("clientSession", clientSession);
-        return executeCount(clientSession, filter, options, CountStrategy.AGGREGATE);
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.internal.MongoCollectionImpl.countDocuments").startScopedSpan();
+
+        try {
+            notNull("clientSession", clientSession);
+            return executeCount(clientSession, filter, options, CountStrategy.AGGREGATE);
+        } finally {
+            ss.close();
+        }
     }
 
     @Override
@@ -240,12 +260,24 @@ class MongoCollectionImpl<TDocument> implements MongoCollection<TDocument> {
 
     @Override
     public long estimatedDocumentCount(final EstimatedDocumentCountOptions options) {
-        return executeCount(null, new BsonDocument(), fromEstimatedDocumentCountOptions(options), CountStrategy.COMMAND);
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.internal.MongoCollectionImpl.estimatedDocumentCount").startScopedSpan();
+
+        try {
+            return executeCount(null, new BsonDocument(), fromEstimatedDocumentCountOptions(options), CountStrategy.COMMAND);
+        } finally {
+            ss.close();
+        }
     }
 
     private long executeCount(@Nullable final ClientSession clientSession, final Bson filter, final CountOptions options,
                               final CountStrategy countStrategy) {
-        return executor.execute(operations.count(filter, options, countStrategy), readPreference, readConcern, clientSession);
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.internal.MongoCollectionImpl.executeCount").startScopedSpan();
+
+        try {
+            return executor.execute(operations.count(filter, options, countStrategy), readPreference, readConcern, clientSession);
+        } finally {
+            ss.close();
+        }
     }
 
     @Override
@@ -267,14 +299,26 @@ class MongoCollectionImpl<TDocument> implements MongoCollection<TDocument> {
     @Override
     public <TResult> DistinctIterable<TResult> distinct(final ClientSession clientSession, final String fieldName, final Bson filter,
                                                         final Class<TResult> resultClass) {
-        notNull("clientSession", clientSession);
-        return createDistinctIterable(clientSession, fieldName, filter, resultClass);
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.internal.MongoCollectionImpl.distinct").startScopedSpan();
+
+        try {
+            notNull("clientSession", clientSession);
+            return createDistinctIterable(clientSession, fieldName, filter, resultClass);
+        } finally {
+            ss.close();
+        }
     }
 
     private <TResult> DistinctIterable<TResult> createDistinctIterable(@Nullable final ClientSession clientSession, final String fieldName,
                                                                        final Bson filter, final Class<TResult> resultClass) {
-        return new DistinctIterableImpl<TDocument, TResult>(clientSession, namespace, documentClass, resultClass, codecRegistry,
-                readPreference, readConcern, executor, fieldName, filter);
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.internal.MongoCollectionImpl.createDistinctIterable").startScopedSpan();
+
+        try {
+            return new DistinctIterableImpl<TDocument, TResult>(clientSession, namespace, documentClass, resultClass, codecRegistry,
+                    readPreference, readConcern, executor, fieldName, filter);
+        } finally {
+            ss.close();
+        }
     }
 
     @Override
@@ -318,8 +362,14 @@ class MongoCollectionImpl<TDocument> implements MongoCollection<TDocument> {
     @Override
     public <TResult> FindIterable<TResult> find(final ClientSession clientSession, final Bson filter,
                                                 final Class<TResult> resultClass) {
-        notNull("clientSession", clientSession);
-        return createFindIterable(clientSession, filter, resultClass);
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.internal.MongoCollectionImpl.find").startScopedSpan();
+
+        try {
+            notNull("clientSession", clientSession);
+            return createFindIterable(clientSession, filter, resultClass);
+        } finally {
+            ss.close();
+        }
     }
 
     private <TResult> FindIterable<TResult> createFindIterable(@Nullable final ClientSession clientSession, final Bson filter,
@@ -346,8 +396,14 @@ class MongoCollectionImpl<TDocument> implements MongoCollection<TDocument> {
     @Override
     public <TResult> AggregateIterable<TResult> aggregate(final ClientSession clientSession, final List<? extends Bson> pipeline,
                                                           final Class<TResult> resultClass) {
-        notNull("clientSession", clientSession);
-        return createAggregateIterable(clientSession, pipeline, resultClass);
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.internal.MongoCollectionImpl.aggregate").startScopedSpan();
+
+        try {
+            notNull("clientSession", clientSession);
+            return createAggregateIterable(clientSession, pipeline, resultClass);
+        } finally {
+            ss.close();
+        }
     }
 
     private <TResult> AggregateIterable<TResult> createAggregateIterable(@Nullable final ClientSession clientSession,
@@ -455,8 +511,14 @@ class MongoCollectionImpl<TDocument> implements MongoCollection<TDocument> {
     @Override
     public BulkWriteResult bulkWrite(final ClientSession clientSession, final List<? extends WriteModel<? extends TDocument>> requests,
                                      final BulkWriteOptions options) {
-        notNull("clientSession", clientSession);
-        return executeBulkWrite(clientSession, requests, options);
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.internal.MongoCollectionImpl.bulkWrite").startScopedSpan();
+
+        try {
+            notNull("clientSession", clientSession);
+            return executeBulkWrite(clientSession, requests, options);
+        } finally {
+            ss.close();
+        }
     }
 
     @SuppressWarnings("unchecked")
@@ -464,7 +526,14 @@ class MongoCollectionImpl<TDocument> implements MongoCollection<TDocument> {
                                              final List<? extends WriteModel<? extends TDocument>> requests,
                                              final BulkWriteOptions options) {
         notNull("requests", requests);
-        return executor.execute(operations.bulkWrite(requests, options), readConcern, clientSession);
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.internal.MongoCollectionImpl.executeBulkWrite").startScopedSpan();
+
+        try {
+            notNull("requests", requests);
+            return executor.execute(operations.bulkWrite(requests, options), readConcern, clientSession);
+        } finally {
+            ss.close();
+        }
     }
 
     @Override
@@ -485,13 +554,25 @@ class MongoCollectionImpl<TDocument> implements MongoCollection<TDocument> {
 
     @Override
     public void insertOne(final ClientSession clientSession, final TDocument document, final InsertOneOptions options) {
-        notNull("clientSession", clientSession);
-        notNull("document", document);
-        executeInsertOne(clientSession, document, options);
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.internal.MongoCollectionImpl.insertOne").startScopedSpan();
+
+        try {
+            notNull("clientSession", clientSession);
+            notNull("document", document);
+            executeInsertOne(clientSession, document, options);
+        } finally {
+            ss.close();
+        }
     }
 
     private void executeInsertOne(@Nullable final ClientSession clientSession, final TDocument document, final InsertOneOptions options) {
-        executeSingleWriteRequest(clientSession, operations.insertOne(document, options), INSERT);
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.internal.MongoCollectionImpl.executeInsertOne").startScopedSpan();
+
+        try {
+            executeSingleWriteRequest(clientSession, operations.insertOne(document, options), INSERT);
+        } finally {
+            ss.close();
+        }
     }
 
     @Override
@@ -511,13 +592,25 @@ class MongoCollectionImpl<TDocument> implements MongoCollection<TDocument> {
 
     @Override
     public void insertMany(final ClientSession clientSession, final List<? extends TDocument> documents, final InsertManyOptions options) {
-        notNull("clientSession", clientSession);
-        executeInsertMany(clientSession, documents, options);
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.internal.MongoCollectionImpl.insertMany").startScopedSpan();
+
+        try {
+            notNull("clientSession", clientSession);
+            executeInsertMany(clientSession, documents, options);
+        } finally {
+            ss.close();
+        }
     }
 
     private void executeInsertMany(@Nullable final ClientSession clientSession, final List<? extends TDocument> documents,
                                    final InsertManyOptions options) {
-        executor.execute(operations.insertMany(documents, options), readConcern, clientSession);
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.internal.MongoCollectionImpl.executeInsertMany").startScopedSpan();
+
+        try {
+            executor.execute(operations.insertMany(documents, options), readConcern, clientSession);
+        } finally {
+            ss.close();
+        }
     }
 
     @Override
@@ -527,7 +620,15 @@ class MongoCollectionImpl<TDocument> implements MongoCollection<TDocument> {
 
     @Override
     public DeleteResult deleteOne(final Bson filter, final DeleteOptions options) {
-        return executeDelete(null, filter, options, false);
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.internal.MongoCollectionImpl.deleteOne-clientSession").startScopedSpan();
+
+        TRACER.getCurrentSpan().addAnnotation("Null clientSession being used");
+
+        try {
+            return executeDelete(null, filter, options, false);
+        } finally {
+            ss.close();
+        }
     }
 
     @Override
@@ -537,8 +638,14 @@ class MongoCollectionImpl<TDocument> implements MongoCollection<TDocument> {
 
     @Override
     public DeleteResult deleteOne(final ClientSession clientSession, final Bson filter, final DeleteOptions options) {
-        notNull("clientSession", clientSession);
-        return executeDelete(clientSession, filter, options, false);
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.internal.MongoCollectionImpl.deleteOne").startScopedSpan();
+
+        try {
+            notNull("clientSession", clientSession);
+            return executeDelete(clientSession, filter, options, false);
+        } finally {
+            ss.close();
+        }
     }
 
     @Override
@@ -599,8 +706,14 @@ class MongoCollectionImpl<TDocument> implements MongoCollection<TDocument> {
 
     private UpdateResult executeReplaceOne(@Nullable final ClientSession clientSession, final Bson filter, final TDocument replacement,
                                            final ReplaceOptions replaceOptions) {
-        return toUpdateResult(executeSingleWriteRequest(clientSession, operations.replaceOne(filter, replacement, replaceOptions),
-                REPLACE));
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.internal.MongoCollectionImpl.executeReplaceOne").startScopedSpan();
+
+        try {
+            return toUpdateResult(executeSingleWriteRequest(clientSession, operations.replaceOne(filter, replacement, replaceOptions),
+                     REPLACE));
+        } finally {
+            ss.close();
+        }
     }
 
     @Override
@@ -621,9 +734,14 @@ class MongoCollectionImpl<TDocument> implements MongoCollection<TDocument> {
     @Override
     public UpdateResult updateOne(final ClientSession clientSession, final Bson filter, final Bson update,
                                   final UpdateOptions updateOptions) {
-        notNull("clientSession", clientSession);
-        return executeUpdate(clientSession, filter, update, updateOptions, false);
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.internal.MongoCollectionImpl.updateOne").startScopedSpan();
 
+        try {
+            notNull("clientSession", clientSession);
+            return executeUpdate(clientSession, filter, update, updateOptions, false);
+        } finally {
+            ss.close();
+        }
     }
 
     @Override
@@ -633,7 +751,13 @@ class MongoCollectionImpl<TDocument> implements MongoCollection<TDocument> {
 
     @Override
     public UpdateResult updateMany(final Bson filter, final Bson update, final UpdateOptions updateOptions) {
-        return executeUpdate(null, filter, update, updateOptions, true);
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.internal.MongoCollectionImpl.updateMany").startScopedSpan();
+
+        try {
+            return executeUpdate(null, filter, update, updateOptions, true);
+        } finally {
+            ss.close();
+        }
     }
 
     @Override
@@ -644,8 +768,14 @@ class MongoCollectionImpl<TDocument> implements MongoCollection<TDocument> {
     @Override
     public UpdateResult updateMany(final ClientSession clientSession, final Bson filter, final Bson update,
                                    final UpdateOptions updateOptions) {
-        notNull("clientSession", clientSession);
-        return executeUpdate(clientSession, filter, update, updateOptions, true);
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.internal.MongoCollectionImpl.updateMany").startScopedSpan();
+
+        try {
+            notNull("clientSession", clientSession);
+            return executeUpdate(clientSession, filter, update, updateOptions, true);
+        } finally {
+            ss.close();
+        }
     }
 
     @Override
@@ -657,7 +787,13 @@ class MongoCollectionImpl<TDocument> implements MongoCollection<TDocument> {
     @Override
     @Nullable
     public TDocument findOneAndDelete(final Bson filter, final FindOneAndDeleteOptions options) {
-        return executeFindOneAndDelete(null, filter, options);
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.internal.MongoCollectionImpl.findOneAndDelete").startScopedSpan();
+
+        try {
+            return executeFindOneAndDelete(null, filter, options);
+        } finally {
+            ss.close();
+        }
     }
 
     @Override
@@ -669,14 +805,26 @@ class MongoCollectionImpl<TDocument> implements MongoCollection<TDocument> {
     @Override
     @Nullable
     public TDocument findOneAndDelete(final ClientSession clientSession, final Bson filter, final FindOneAndDeleteOptions options) {
-        notNull("clientSession", clientSession);
-        return executeFindOneAndDelete(clientSession, filter, options);
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.internal.MongoCollectionImpl.findOneAndDelete").startScopedSpan();
+
+        try {
+            notNull("clientSession", clientSession);
+            return executeFindOneAndDelete(clientSession, filter, options);
+        } finally {
+            ss.close();
+        }
     }
 
     @Nullable
     private TDocument executeFindOneAndDelete(@Nullable final ClientSession clientSession, final Bson filter,
                                               final FindOneAndDeleteOptions options) {
-        return executor.execute(operations.findOneAndDelete(filter, options), readConcern, clientSession);
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.internal.MongoCollectionImpl.executeFindOneAndDelete").startScopedSpan();
+
+        try {
+            return executor.execute(operations.findOneAndDelete(filter, options), readConcern, clientSession);
+        } finally {
+            ss.close();
+        }
     }
 
     @Override
@@ -688,7 +836,13 @@ class MongoCollectionImpl<TDocument> implements MongoCollection<TDocument> {
     @Override
     @Nullable
     public TDocument findOneAndReplace(final Bson filter, final TDocument replacement, final FindOneAndReplaceOptions options) {
-        return executeFindOneAndReplace(null, filter, replacement, options);
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.internal.MongoCollectionImpl.findOneAndReplace").startScopedSpan();
+
+        try {
+            return executeFindOneAndReplace(null, filter, replacement, options);
+        } finally {
+            ss.close();
+        }
     }
 
     @Override
@@ -701,14 +855,26 @@ class MongoCollectionImpl<TDocument> implements MongoCollection<TDocument> {
     @Nullable
     public TDocument findOneAndReplace(final ClientSession clientSession, final Bson filter, final TDocument replacement,
                                        final FindOneAndReplaceOptions options) {
-        notNull("clientSession", clientSession);
-        return executeFindOneAndReplace(clientSession, filter, replacement, options);
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.internal.MongoCollectionImpl.findOneAndReplace").startScopedSpan();
+
+        try {
+            notNull("clientSession", clientSession);
+            return executeFindOneAndReplace(clientSession, filter, replacement, options);
+        } finally {
+            ss.close();
+        }
     }
 
     @Nullable
     private TDocument executeFindOneAndReplace(@Nullable final ClientSession clientSession, final Bson filter, final TDocument replacement,
                                                final FindOneAndReplaceOptions options) {
-        return executor.execute(operations.findOneAndReplace(filter, replacement, options), readConcern, clientSession);
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.internal.MongoCollectionImpl.executeFindOneAndReplace").startScopedSpan();
+
+        try {
+            return executor.execute(operations.findOneAndReplace(filter, replacement, options), readConcern, clientSession);
+        } finally {
+            ss.close();
+        }
     }
 
     @Override
@@ -733,34 +899,70 @@ class MongoCollectionImpl<TDocument> implements MongoCollection<TDocument> {
     @Nullable
     public TDocument findOneAndUpdate(final ClientSession clientSession, final Bson filter, final Bson update,
                                       final FindOneAndUpdateOptions options) {
-        notNull("clientSession", clientSession);
-        return executeFindOneAndUpdate(clientSession, filter, update, options);
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.internal.MongoCollectionImpl.findOneAndUpdate").startScopedSpan();
+
+        try {
+            notNull("clientSession", clientSession);
+            return executeFindOneAndUpdate(clientSession, filter, update, options);
+        } finally {
+            ss.close();
+        }
     }
 
     @Nullable
     private TDocument executeFindOneAndUpdate(@Nullable final ClientSession clientSession, final Bson filter, final Bson update,
                                               final FindOneAndUpdateOptions options) {
-        return executor.execute(operations.findOneAndUpdate(filter, update, options), readConcern, clientSession);
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.internal.MongoCollectionImpl.executeFindOneAndUpdate").startScopedSpan();
+
+        try {
+            return executor.execute(operations.findOneAndUpdate(filter, update, options), readConcern, clientSession);
+        } finally {
+            ss.close();
+        }
     }
 
     @Override
     public void drop() {
-        executeDrop(null);
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.internal.MongoCollectionImpl.drop").startScopedSpan();
+
+        try {
+            executeDrop(null);
+        } finally {
+            ss.close();
+        }
     }
 
     @Override
     public void drop(final ClientSession clientSession) {
-        notNull("clientSession", clientSession);
-        executeDrop(clientSession);
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.internal.MongoCollectionImpl.drop").startScopedSpan();
+
+        try {
+            notNull("clientSession", clientSession);
+            executeDrop(clientSession);
+        } finally {
+            ss.close();
+        }
     }
 
     private void executeDrop(@Nullable final ClientSession clientSession) {
-        executor.execute(operations.dropCollection(), readConcern, clientSession);
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.internal.MongoCollectionImpl.executeDrop").startScopedSpan();
+
+        try {
+            executor.execute(operations.dropCollection(), readConcern, clientSession);
+        } finally {
+            ss.close();
+        }
     }
 
     @Override
     public String createIndex(final Bson keys) {
-        return createIndex(keys, new IndexOptions());
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.internal.MongoCollectionImpl.createIndex").startScopedSpan();
+
+        try {
+            return createIndex(keys, new IndexOptions());
+        } finally {
+            ss.close();
+        }
     }
 
     @Override
@@ -796,14 +998,26 @@ class MongoCollectionImpl<TDocument> implements MongoCollection<TDocument> {
     @Override
     public List<String> createIndexes(final ClientSession clientSession, final List<IndexModel> indexes,
                                       final CreateIndexOptions createIndexOptions) {
-        notNull("clientSession", clientSession);
-        return executeCreateIndexes(clientSession, indexes, createIndexOptions);
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.internal.MongoCollectionImpl.createIndexes").startScopedSpan();
+
+        try {
+            notNull("clientSession", clientSession);
+            return executeCreateIndexes(clientSession, indexes, createIndexOptions);
+        } finally {
+            ss.close();
+        }
     }
 
     private List<String> executeCreateIndexes(@Nullable final ClientSession clientSession, final List<IndexModel> indexes,
                                               final CreateIndexOptions createIndexOptions) {
-        executor.execute(operations.createIndexes(indexes, createIndexOptions), readConcern, clientSession);
-        return IndexHelper.getIndexNames(indexes, codecRegistry);
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.internal.MongoCollectionImpl.executeCreateIndexes").startScopedSpan();
+
+        try {
+            executor.execute(operations.createIndexes(indexes, createIndexOptions), readConcern, clientSession);
+            return IndexHelper.getIndexNames(indexes, codecRegistry);
+        } finally {
+            ss.close();
+        }
     }
 
     @Override
@@ -866,13 +1080,25 @@ class MongoCollectionImpl<TDocument> implements MongoCollection<TDocument> {
     @Override
     public void dropIndex(final ClientSession clientSession, final String indexName, final DropIndexOptions dropIndexOptions) {
         notNull("clientSession", clientSession);
-        executeDropIndex(clientSession, indexName, dropIndexOptions);
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.internal.MongoCollectionImpl.dropIndex").startScopedSpan();
+
+        try {
+            executeDropIndex(clientSession, indexName, dropIndexOptions);
+        } finally {
+            ss.close();
+        }
     }
 
     @Override
     public void dropIndex(final ClientSession clientSession, final Bson keys, final DropIndexOptions dropIndexOptions) {
-        notNull("clientSession", clientSession);
-        executeDropIndex(clientSession, keys, dropIndexOptions);
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.internal.MongoCollectionImpl.dropIndex").startScopedSpan();
+
+        try {
+            notNull("clientSession", clientSession);
+            executeDropIndex(clientSession, keys, dropIndexOptions);
+        } finally {
+            ss.close();
+        }
     }
 
     @Override
@@ -882,8 +1108,14 @@ class MongoCollectionImpl<TDocument> implements MongoCollection<TDocument> {
 
     @Override
     public void dropIndexes(final ClientSession clientSession) {
-        notNull("clientSession", clientSession);
-        executeDropIndex(clientSession, "*", new DropIndexOptions());
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.internal.MongoCollectionImpl.dropIndexes").startScopedSpan();
+
+        try {
+            notNull("clientSession", clientSession);
+            executeDropIndex(clientSession, "*", new DropIndexOptions());
+        } finally {
+            ss.close();
+        }
     }
 
     @Override
@@ -898,12 +1130,24 @@ class MongoCollectionImpl<TDocument> implements MongoCollection<TDocument> {
 
     private void executeDropIndex(@Nullable final ClientSession clientSession, final String indexName,
                                   final DropIndexOptions dropIndexOptions) {
-        notNull("dropIndexOptions", dropIndexOptions);
-        executor.execute(operations.dropIndex(indexName, dropIndexOptions), readConcern, clientSession);
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.internal.MongoCollectionImpl.executeDropIndex").startScopedSpan();
+
+        try {
+            notNull("dropIndexOptions", dropIndexOptions);
+            executor.execute(operations.dropIndex(indexName, dropIndexOptions), readConcern, clientSession);
+        } finally {
+            ss.close();
+        }
     }
 
     private void executeDropIndex(@Nullable final ClientSession clientSession, final Bson keys, final DropIndexOptions dropIndexOptions) {
-        executor.execute(operations.dropIndex(keys, dropIndexOptions), readConcern, clientSession);
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.internal.MongoCollectionImpl.executeDropIndex").startScopedSpan();
+
+        try {
+            executor.execute(operations.dropIndex(keys, dropIndexOptions), readConcern, clientSession);
+        } finally {
+            ss.close();
+        }
     }
 
     @Override
@@ -924,75 +1168,138 @@ class MongoCollectionImpl<TDocument> implements MongoCollection<TDocument> {
     @Override
     public void renameCollection(final ClientSession clientSession, final MongoNamespace newCollectionNamespace,
                                  final RenameCollectionOptions renameCollectionOptions) {
-        notNull("clientSession", clientSession);
-        executeRenameCollection(clientSession, newCollectionNamespace, renameCollectionOptions);
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.internal.MongoCollectionImpl.renameCollection").startScopedSpan();
+
+        try {
+            notNull("clientSession", clientSession);
+            executeRenameCollection(clientSession, newCollectionNamespace, renameCollectionOptions);
+        } finally {
+            ss.close();
+        }
     }
 
     private void executeRenameCollection(@Nullable final ClientSession clientSession, final MongoNamespace newCollectionNamespace,
                                          final RenameCollectionOptions renameCollectionOptions) {
-        executor.execute(new RenameCollectionOperation(getNamespace(), newCollectionNamespace, writeConcern)
-                        .dropTarget(renameCollectionOptions.isDropTarget()),
-                readConcern, clientSession);
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.internal.MongoCollectionImpl.executeRenameCollection").startScopedSpan();
+
+        try {
+            executor.execute(new RenameCollectionOperation(getNamespace(), newCollectionNamespace, writeConcern)
+                            .dropTarget(renameCollectionOptions.isDropTarget()),
+                    readConcern, clientSession);
+        } finally {
+            ss.close();
+        }
     }
 
     private DeleteResult executeDelete(@Nullable final ClientSession clientSession, final Bson filter, final DeleteOptions deleteOptions,
                                        final boolean multi) {
-        com.mongodb.bulk.BulkWriteResult result = executeSingleWriteRequest(clientSession,
-                multi ? operations.deleteMany(filter, deleteOptions) : operations.deleteOne(filter, deleteOptions), DELETE);
-        if (result.wasAcknowledged()) {
-            return DeleteResult.acknowledged(result.getDeletedCount());
-        } else {
-            return DeleteResult.unacknowledged();
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.internal.MongoCollectionImpl.executeDelete").startScopedSpan();
+
+        try {
+            TRACER.getCurrentSpan().addAnnotation("Executing a single write request");
+            com.mongodb.bulk.BulkWriteResult result = executeSingleWriteRequest(clientSession,
+                    multi ? operations.deleteMany(filter, deleteOptions) : operations.deleteOne(filter, deleteOptions), DELETE);
+            if (result.wasAcknowledged()) {
+                TRACER.getCurrentSpan().addAnnotation("Acknowledged delete result");
+                long deletedCount = result.getDeletedCount();
+                TRACER.getCurrentSpan().putAttribute("deleted_count", AttributeValue.longAttributeValue(deletedCount));
+                return DeleteResult.acknowledged(deletedCount);
+            } else {
+                TRACER.getCurrentSpan().addAnnotation("Unacknowledged delete result");
+                return DeleteResult.unacknowledged();
+            }
+        } finally {
+            ss.close();
         }
     }
 
     private UpdateResult executeUpdate(@Nullable final ClientSession clientSession, final Bson filter, final Bson update,
                                        final UpdateOptions updateOptions, final boolean multi) {
-        return toUpdateResult(executeSingleWriteRequest(clientSession,
-                multi ? operations.updateMany(filter, update, updateOptions) : operations.updateOne(filter, update, updateOptions),
-                UPDATE));
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.internal.MongoCollectionImpl.executeUpdate").startScopedSpan();
+
+        try {
+            return toUpdateResult(executeSingleWriteRequest(clientSession,
+                    multi ? operations.updateMany(filter, update, updateOptions) : operations.updateOne(filter, update, updateOptions),
+                    UPDATE));
+        } finally {
+            ss.close();
+        }
     }
 
     private BulkWriteResult executeSingleWriteRequest(@Nullable final ClientSession clientSession,
                                                       final WriteOperation<BulkWriteResult> writeOperation,
                                                       final WriteRequest.Type type) {
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.internal.MongoCollectionImpl.executeSingleWriteRequest").startScopedSpan();
+
         try {
             return executor.execute(writeOperation, readConcern, clientSession);
         } catch (MongoBulkWriteException e) {
+            TRACER.getCurrentSpan().addAnnotation("Encountered a MongoBulkWriteExecption");
+            TRACER.getCurrentSpan().setStatus(Status.UNKNOWN.withDescription(e.toString()));
+
             if (e.getWriteErrors().isEmpty()) {
+                TRACER.getCurrentSpan().putAttribute("getWriteErrors.isEmpty", AttributeValue.booleanAttributeValue(true));
+
                 throw new MongoWriteConcernException(e.getWriteConcernError(),
                         translateBulkWriteResult(type, e.getWriteResult()),
                         e.getServerAddress());
             } else {
+                TRACER.getCurrentSpan().putAttribute("getWriteErrors.isEmpty", AttributeValue.booleanAttributeValue(false));
+                TRACER.getCurrentSpan().setStatus(Status.UNKNOWN.withDescription(e.toString()));
                 throw new MongoWriteException(new WriteError(e.getWriteErrors().get(0)), e.getServerAddress());
             }
+        } finally {
+            ss.close();
         }
     }
 
     private WriteConcernResult translateBulkWriteResult(final WriteRequest.Type type, final BulkWriteResult writeResult) {
-        switch (type) {
-            case INSERT:
-                return WriteConcernResult.acknowledged(writeResult.getInsertedCount(), false, null);
-            case DELETE:
-                return WriteConcernResult.acknowledged(writeResult.getDeletedCount(), false, null);
-            case UPDATE:
-            case REPLACE:
-                return WriteConcernResult.acknowledged(writeResult.getMatchedCount() + writeResult.getUpserts().size(),
-                        writeResult.getMatchedCount() > 0,
-                        writeResult.getUpserts().isEmpty()
-                                ? null : writeResult.getUpserts().get(0).getId());
-            default:
-                throw new MongoInternalException("Unhandled write request type: " + type);
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.internal.MongoCollectionImpl.translateBulkWriteResult").startScopedSpan();
+        TRACER.getCurrentSpan().addAnnotation("Switching on the WriteResult type");
+
+        try {
+            switch (type) {
+                case INSERT:
+                    TRACER.getCurrentSpan().putAttribute("write_type", AttributeValue.stringAttributeValue("insert"));
+                    return WriteConcernResult.acknowledged(writeResult.getInsertedCount(), false, null);
+                case DELETE:
+                    TRACER.getCurrentSpan().putAttribute("write_type", AttributeValue.stringAttributeValue("delete"));
+                    return WriteConcernResult.acknowledged(writeResult.getDeletedCount(), false, null);
+                case UPDATE:
+                case REPLACE:
+                    TRACER.getCurrentSpan().putAttribute("write_type", AttributeValue.stringAttributeValue("update/replace"));
+                    return WriteConcernResult.acknowledged(writeResult.getMatchedCount() + writeResult.getUpserts().size(),
+                            writeResult.getMatchedCount() > 0,
+                            writeResult.getUpserts().isEmpty()
+                                    ? null : writeResult.getUpserts().get(0).getId());
+                default:
+                    throw new MongoInternalException("Unhandled write request type: " + type);
+            }
+        } finally {
+            ss.close();
         }
     }
 
     private UpdateResult toUpdateResult(final com.mongodb.bulk.BulkWriteResult result) {
-        if (result.wasAcknowledged()) {
-            Long modifiedCount = result.isModifiedCountAvailable() ? (long) result.getModifiedCount() : null;
-            BsonValue upsertedId = result.getUpserts().isEmpty() ? null : result.getUpserts().get(0).getId();
-            return UpdateResult.acknowledged(result.getMatchedCount(), modifiedCount, upsertedId);
-        } else {
-            return UpdateResult.unacknowledged();
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.internal.MongoCollectionImpl.toUpdateResult").startScopedSpan();
+
+        try {
+            if (result.wasAcknowledged()) {
+                TRACER.getCurrentSpan().addAnnotation("Result was acknowledged");
+                Long modifiedCount = result.isModifiedCountAvailable() ? (long) result.getModifiedCount() : null;
+                if (modifiedCount != null) {
+                    TRACER.getCurrentSpan().putAttribute("modifiedCount", AttributeValue.longAttributeValue(modifiedCount));
+                } else {
+                    TRACER.getCurrentSpan().putAttribute("modifiedCount", AttributeValue.longAttributeValue(0));
+                }
+
+                BsonValue upsertedId = result.getUpserts().isEmpty() ? null : result.getUpserts().get(0).getId();
+                return UpdateResult.acknowledged(result.getMatchedCount(), modifiedCount, upsertedId);
+            } else {
+                return UpdateResult.unacknowledged();
+            }
+        } finally {
+            ss.close();
         }
     }
 

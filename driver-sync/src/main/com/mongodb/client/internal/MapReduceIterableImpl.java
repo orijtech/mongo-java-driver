@@ -33,6 +33,10 @@ import com.mongodb.operation.MapReduceStatistics;
 import com.mongodb.operation.ReadOperation;
 import com.mongodb.operation.WriteOperation;
 import com.mongodb.client.ClientSession;
+
+import io.opencensus.common.Scope;
+import io.opencensus.trace.Tracing;
+
 import org.bson.BsonDocument;
 import org.bson.codecs.configuration.CodecRegistry;
 import org.bson.conversions.Bson;
@@ -216,9 +220,15 @@ class MapReduceIterableImpl<TDocument, TResult> extends MongoIterableImpl<TResul
     }
 
     private WriteOperation<MapReduceStatistics> createMapReduceToCollectionOperation() {
-        return operations.mapReduceToCollection(databaseName, collectionName, mapFunction, reduceFunction, finalizeFunction, filter,
-                limit, maxTimeMS, jsMode, scope, sort, verbose, action, nonAtomic, sharded, bypassDocumentValidation, collation
-        );
+        Scope ss = Tracing.getTracer().spanBuilder("com.mongodb.client.internal.MapReduceIterableImpl.WriteOperation").startScopedSpan();
+
+        try {
+            return operations.mapReduceToCollection(databaseName, collectionName, mapFunction, reduceFunction, finalizeFunction, filter,
+                    limit, maxTimeMS, jsMode, scope, sort, verbose, action, nonAtomic, sharded, bypassDocumentValidation, collation
+            );
+        } finally {
+            ss.close();
+        }
     }
 
     // this could be inlined, but giving it a name so that it's unit-testable

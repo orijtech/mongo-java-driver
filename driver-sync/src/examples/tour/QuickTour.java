@@ -32,6 +32,12 @@ import com.mongodb.client.result.DeleteResult;
 import com.mongodb.client.result.UpdateResult;
 import org.bson.Document;
 
+import io.opencensus.exporter.trace.stackdriver.StackdriverTraceConfiguration;
+import io.opencensus.exporter.trace.stackdriver.StackdriverTraceExporter;
+import io.opencensus.trace.samplers.Samplers;
+import io.opencensus.trace.config.TraceConfig;
+import io.opencensus.trace.Tracing;
+
 import java.util.ArrayList;
 import java.util.List;
 
@@ -63,6 +69,19 @@ public class QuickTour {
      * @param args takes an optional single argument for the connection string
      */
     public static void main(final String[] args) {
+        try {
+            StackdriverTraceExporter.createAndRegister(
+                StackdriverTraceConfiguration.builder()
+                .setProjectId("census-demos")
+                .build());
+        } catch (Exception e) {
+            System.out.println(e);
+        }
+
+        TraceConfig traceConfig = Tracing.getTraceConfig();
+        traceConfig.updateActiveTraceParams(
+            traceConfig.getActiveTraceParams().toBuilder().setSampler(Samplers.alwaysSample()).build());
+
         MongoClient mongoClient;
 
         if (args.length == 0) {

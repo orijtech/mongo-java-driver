@@ -23,7 +23,6 @@ import com.mongodb.ReadConcern;
 import com.mongodb.ReadPreference;
 import com.mongodb.WriteConcern;
 import com.mongodb.client.ChangeStreamIterable;
-import com.mongodb.client.ClientSession;
 import com.mongodb.client.ListCollectionsIterable;
 import com.mongodb.client.MongoCollection;
 import com.mongodb.client.MongoDatabase;
@@ -38,6 +37,13 @@ import com.mongodb.operation.CommandReadOperation;
 import com.mongodb.operation.CreateCollectionOperation;
 import com.mongodb.operation.CreateViewOperation;
 import com.mongodb.operation.DropDatabaseOperation;
+import com.mongodb.client.ClientSession;
+
+import io.opencensus.common.Scope;
+import io.opencensus.trace.AttributeValue;
+import io.opencensus.trace.Tracing;
+import io.opencensus.trace.Tracer;
+
 import org.bson.BsonDocument;
 import org.bson.Document;
 import org.bson.codecs.configuration.CodecRegistry;
@@ -61,6 +67,8 @@ public class MongoDatabaseImpl implements MongoDatabase {
     private final boolean retryWrites;
     private final ReadConcern readConcern;
     private final OperationExecutor executor;
+
+    private static final Tracer TRACER = Tracing.getTracer();
 
     public MongoDatabaseImpl(final String name, final CodecRegistry codecRegistry, final ReadPreference readPreference,
                              final WriteConcern writeConcern, final boolean retryWrites, final ReadConcern readConcern,
@@ -169,33 +177,66 @@ public class MongoDatabaseImpl implements MongoDatabase {
     @Override
     public <TResult> TResult runCommand(final ClientSession clientSession, final Bson command, final ReadPreference readPreference,
                                         final Class<TResult> resultClass) {
-        notNull("clientSession", clientSession);
-        return executeCommand(clientSession, command, readPreference, resultClass);
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.internal.MongoDatabaseImpl.runCommand").startScopedSpan();
+        TRACER.getCurrentSpan().addAnnotation("RunCommand with specified ReadPreference");
+
+        try {
+            notNull("clientSession", clientSession);
+            return executeCommand(clientSession, command, readPreference, resultClass);
+        } finally {
+            ss.close();
+        }
     }
 
     private <TResult> TResult executeCommand(@Nullable final ClientSession clientSession, final Bson command,
                                              final ReadPreference readPreference, final Class<TResult> resultClass) {
-        notNull("readPreference", readPreference);
-        if (clientSession != null && clientSession.hasActiveTransaction() && !readPreference.equals(ReadPreference.primary())) {
-            throw new MongoClientException("Read preference in a transaction must be primary");
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.internal.MongoDatabaseImpl.executeCommand").startScopedSpan();
+
+        try {
+            notNull("readPreference", readPreference);
+            if (clientSession != null && clientSession.hasActiveTransaction() && !readPreference.equals(ReadPreference.primary())) {
+                throw new MongoClientException("Read preference in a transaction must be primary");
+            }
+            return executor.execute(new CommandReadOperation<TResult>(getName(), toBsonDocument(command), codecRegistry.get(resultClass)),
+                    readPreference, readConcern, clientSession);
+        } finally {
+            ss.close();
         }
-        return executor.execute(new CommandReadOperation<TResult>(getName(), toBsonDocument(command), codecRegistry.get(resultClass)),
-                readPreference, readConcern, clientSession);
     }
 
     @Override
     public void drop() {
-        executeDrop(null);
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.internal.MongoDatabaseImpl.drop").startScopedSpan();
+
+        try {
+            executeDrop(null);
+        } finally {
+            ss.close();
+        }
     }
 
     @Override
     public void drop(final ClientSession clientSession) {
-        notNull("clientSession", clientSession);
-        executeDrop(clientSession);
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.internal.MongoDatabaseImpl.drop").startScopedSpan();
+        TRACER.getCurrentSpan().addAnnotation("Dropping Database with ClientSession");
+
+        try {
+            notNull("clientSession", clientSession);
+            executeDrop(clientSession);
+        } finally {
+            ss.close();
+        }
     }
 
     private void executeDrop(@Nullable final ClientSession clientSession) {
-        executor.execute(new DropDatabaseOperation(name, getWriteConcern()), readConcern, clientSession);
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.internal.MongoDatabaseImpl.executeDrop").startScopedSpan();
+        TRACER.getCurrentSpan().addAnnotation("Dropping database");
+
+        try {
+            executor.execute(new DropDatabaseOperation(name, getWriteConcern()), readConcern, clientSession);
+        } finally {
+            ss.close();
+        }
     }
 
     @Override
@@ -210,13 +251,20 @@ public class MongoDatabaseImpl implements MongoDatabase {
     }
 
     private MongoIterable<String> createListCollectionNamesIterable(@Nullable final ClientSession clientSession) {
-        return createListCollectionsIterable(clientSession, BsonDocument.class, true)
-                .map(new Function<BsonDocument, String>() {
-                    @Override
-                    public String apply(final BsonDocument result) {
-                        return result.getString("name").getValue();
-                    }
-                });
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.internal.MongoDatabaseImpl.createListCollectionnamesIterable").startScopedSpan();
+        TRACER.getCurrentSpan().putAttribute("null client session", AttributeValue.booleanAttributeValue(clientSession == null));
+
+        try {
+            return createListCollectionsIterable(clientSession, BsonDocument.class, true)
+                    .map(new Function<BsonDocument, String>() {
+                        @Override
+                        public String apply(final BsonDocument result) {
+                            return result.getString("name").getValue();
+                        }
+                    });
+        } finally {
+            ss.close();
+        }
     }
 
     @Override
@@ -265,39 +313,51 @@ public class MongoDatabaseImpl implements MongoDatabase {
     @Override
     public void createCollection(final ClientSession clientSession, final String collectionName,
                                  final CreateCollectionOptions createCollectionOptions) {
-        notNull("clientSession", clientSession);
-        executeCreateCollection(clientSession, collectionName, createCollectionOptions);
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.internal.MongoDatabaseImpl.createCollection").startScopedSpan();
+
+        try {
+            notNull("clientSession", clientSession);
+            executeCreateCollection(clientSession, collectionName, createCollectionOptions);
+        } finally {
+            ss.close();
+        }
     }
 
     @SuppressWarnings("deprecation")
     private void executeCreateCollection(@Nullable final ClientSession clientSession, final String collectionName,
                                          final CreateCollectionOptions createCollectionOptions) {
-        CreateCollectionOperation operation = new CreateCollectionOperation(name, collectionName, writeConcern)
-                .collation(createCollectionOptions.getCollation())
-                .capped(createCollectionOptions.isCapped())
-                .sizeInBytes(createCollectionOptions.getSizeInBytes())
-                .autoIndex(createCollectionOptions.isAutoIndex())
-                .maxDocuments(createCollectionOptions.getMaxDocuments())
-                .usePowerOf2Sizes(createCollectionOptions.isUsePowerOf2Sizes())
-                .storageEngineOptions(toBsonDocument(createCollectionOptions.getStorageEngineOptions()));
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.internal.MongoDatabaseImpl.executeCreateCollection").startScopedSpan();
 
-        IndexOptionDefaults indexOptionDefaults = createCollectionOptions.getIndexOptionDefaults();
-        Bson storageEngine = indexOptionDefaults.getStorageEngine();
-        if (storageEngine != null) {
-            operation.indexOptionDefaults(new BsonDocument("storageEngine", toBsonDocument(storageEngine)));
+        try {
+            CreateCollectionOperation operation = new CreateCollectionOperation(name, collectionName, writeConcern)
+                    .collation(createCollectionOptions.getCollation())
+                    .capped(createCollectionOptions.isCapped())
+                    .sizeInBytes(createCollectionOptions.getSizeInBytes())
+                    .autoIndex(createCollectionOptions.isAutoIndex())
+                    .maxDocuments(createCollectionOptions.getMaxDocuments())
+                    .usePowerOf2Sizes(createCollectionOptions.isUsePowerOf2Sizes())
+                    .storageEngineOptions(toBsonDocument(createCollectionOptions.getStorageEngineOptions()));
+
+            IndexOptionDefaults indexOptionDefaults = createCollectionOptions.getIndexOptionDefaults();
+            Bson storageEngine = indexOptionDefaults.getStorageEngine();
+            if (storageEngine != null) {
+                operation.indexOptionDefaults(new BsonDocument("storageEngine", toBsonDocument(storageEngine)));
+            }
+            ValidationOptions validationOptions = createCollectionOptions.getValidationOptions();
+            Bson validator = validationOptions.getValidator();
+            if (validator != null) {
+                operation.validator(toBsonDocument(validator));
+            }
+            if (validationOptions.getValidationLevel() != null) {
+                operation.validationLevel(validationOptions.getValidationLevel());
+            }
+            if (validationOptions.getValidationAction() != null) {
+                operation.validationAction(validationOptions.getValidationAction());
+            }
+            executor.execute(operation, readConcern, clientSession);
+        } finally {
+            ss.close();
         }
-        ValidationOptions validationOptions = createCollectionOptions.getValidationOptions();
-        Bson validator = validationOptions.getValidator();
-        if (validator != null) {
-            operation.validator(toBsonDocument(validator));
-        }
-        if (validationOptions.getValidationLevel() != null) {
-            operation.validationLevel(validationOptions.getValidationLevel());
-        }
-        if (validationOptions.getValidationAction() != null) {
-            operation.validationAction(validationOptions.getValidationAction());
-        }
-        executor.execute(operation, readConcern, clientSession);
     }
 
     @Override
@@ -320,8 +380,14 @@ public class MongoDatabaseImpl implements MongoDatabase {
     @Override
     public void createView(final ClientSession clientSession, final String viewName, final String viewOn,
                            final List<? extends Bson> pipeline, final CreateViewOptions createViewOptions) {
-        notNull("clientSession", clientSession);
-        executeCreateView(clientSession, viewName, viewOn, pipeline, createViewOptions);
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.internal.MongoDatabaseImpl.createView").startScopedSpan();
+
+        try {
+            notNull("clientSession", clientSession);
+            executeCreateView(clientSession, viewName, viewOn, pipeline, createViewOptions);
+        } finally {
+            ss.close();
+        }
     }
 
     @Override
@@ -341,7 +407,13 @@ public class MongoDatabaseImpl implements MongoDatabase {
 
     @Override
     public <TResult> ChangeStreamIterable<TResult> watch(final List<? extends Bson> pipeline, final Class<TResult> resultClass) {
-        return createChangeStreamIterable(null, pipeline, resultClass);
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.internal.MongoDatabaseImpl.watch").startScopedSpan();
+
+        try {
+            return createChangeStreamIterable(null, pipeline, resultClass);
+        } finally {
+            ss.close();
+        }
     }
 
     @Override
@@ -362,35 +434,60 @@ public class MongoDatabaseImpl implements MongoDatabase {
     @Override
     public <TResult> ChangeStreamIterable<TResult> watch(final ClientSession clientSession, final List<? extends Bson> pipeline,
                                                          final Class<TResult> resultClass) {
-        notNull("clientSession", clientSession);
-        return createChangeStreamIterable(clientSession, pipeline, resultClass);
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.internal.MongoDatabaseImpl.watch").startScopedSpan();
+
+        try {
+            notNull("clientSession", clientSession);
+            return createChangeStreamIterable(clientSession, pipeline, resultClass);
+        } finally {
+            ss.close();
+        }
     }
 
     private <TResult> ChangeStreamIterable<TResult> createChangeStreamIterable(@Nullable final ClientSession clientSession,
                                                                                final List<? extends Bson> pipeline,
                                                                                final Class<TResult> resultClass) {
-        return new ChangeStreamIterableImpl<TResult>(clientSession, name, codecRegistry, readPreference,
-                readConcern, executor, pipeline, resultClass, ChangeStreamLevel.DATABASE);
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.internal.MongoDatabaseImpl.createChangeStreamIterable").startScopedSpan();
+
+        try {
+            return new ChangeStreamIterableImpl<TResult>(clientSession, name, codecRegistry, readPreference,
+                    readConcern, executor, pipeline, resultClass, ChangeStreamLevel.DATABASE);
+        } finally {
+            ss.close();
+        }
     }
 
     private void executeCreateView(@Nullable final ClientSession clientSession, final String viewName, final String viewOn,
                                    final List<? extends Bson> pipeline, final CreateViewOptions createViewOptions) {
-        notNull("createViewOptions", createViewOptions);
-        executor.execute(new CreateViewOperation(name, viewName, viewOn, createBsonDocumentList(pipeline), writeConcern)
-                        .collation(createViewOptions.getCollation()),
-                readConcern, clientSession);
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.internal.MongoDatabaseImpl.executeCreateView").startScopedSpan();
+
+        try {
+            notNull("createViewOptions", createViewOptions);
+            executor.execute(new CreateViewOperation(name, viewName, viewOn, createBsonDocumentList(pipeline), writeConcern)
+                            .collation(createViewOptions.getCollation()),
+                    readConcern, clientSession);
+        } finally {
+            ss.close();
+        }
     }
 
     private List<BsonDocument> createBsonDocumentList(final List<? extends Bson> pipeline) {
-        notNull("pipeline", pipeline);
-        List<BsonDocument> bsonDocumentPipeline = new ArrayList<BsonDocument>(pipeline.size());
-        for (Bson obj : pipeline) {
-            if (obj == null) {
-                throw new IllegalArgumentException("pipeline can not contain a null value");
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.internal.MongoDatabaseImpl.createBsonDocumentList").startScopedSpan();
+
+        try {
+            notNull("pipeline", pipeline);
+            TRACER.getCurrentSpan().putAttribute("pipeline length", AttributeValue.longAttributeValue(pipeline.size()));
+            List<BsonDocument> bsonDocumentPipeline = new ArrayList<BsonDocument>(pipeline.size());
+            for (Bson obj : pipeline) {
+                if (obj == null) {
+                    throw new IllegalArgumentException("pipeline can not contain a null value");
+                }
+                bsonDocumentPipeline.add(obj.toBsonDocument(BsonDocument.class, codecRegistry));
             }
-            bsonDocumentPipeline.add(obj.toBsonDocument(BsonDocument.class, codecRegistry));
+            return bsonDocumentPipeline;
+        } finally {
+            ss.close();
         }
-        return bsonDocumentPipeline;
     }
 
     @Nullable

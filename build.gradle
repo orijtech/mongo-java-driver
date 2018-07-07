@@ -67,6 +67,11 @@ configure(subprojects.findAll { it.name != 'util' }) {
         compile 'org.slf4j:slf4j-api:1.7.6', optional
 
         testCompile 'com.google.code.findbugs:jsr305:1.3.9'
+
+        compile 'io.opencensus:opencensus-api:0.14.0'
+        runtime 'io.opencensus:opencensus-impl:0.14.0'
+        compile 'io.opencensus:opencensus-exporter-trace-stackdriver:0.14.0'
+        runtime 'io.opencensus:opencensus-exporter-trace-stackdriver:0.14.0'
     }
 
     /* Compiling */

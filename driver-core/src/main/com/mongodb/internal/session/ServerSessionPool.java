@@ -38,6 +38,10 @@ import org.bson.codecs.BsonDocumentCodec;
 import org.bson.codecs.EncoderContext;
 import org.bson.codecs.UuidCodec;
 
+import io.opencensus.common.Scope;
+import io.opencensus.trace.Tracer;
+import io.opencensus.trace.Tracing;
+
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -56,6 +60,7 @@ public class ServerSessionPool {
     private volatile boolean closing;
     private volatile boolean closed;
     private final List<BsonDocument> closedSessionIdentifiers = new ArrayList<BsonDocument>();
+    private static final Tracer TRACER = Tracing.getTracer();
 
     interface Clock {
         long millis();
@@ -76,49 +81,80 @@ public class ServerSessionPool {
     }
 
     public ServerSession get() {
-        isTrue("server session pool is open", !closed);
-        ServerSessionImpl serverSession = serverSessionPool.get();
-        while (shouldPrune(serverSession)) {
-            serverSessionPool.release(serverSession, true);
-            serverSession = serverSessionPool.get();
+        Scope ss = TRACER.spanBuilder("com.mongodb.internal.session.ServerSessionPool.get").startScopedSpan();
+
+        try {
+            isTrue("server session pool is open", !closed);
+            ServerSessionImpl serverSession = serverSessionPool.get();
+            while (shouldPrune(serverSession)) {
+                serverSessionPool.release(serverSession, true);
+                serverSession = serverSessionPool.get();
+            }
+            return serverSession;
+        } finally {
+            ss.close();
         }
-        return serverSession;
     }
 
     public void release(final ServerSession serverSession) {
-        serverSessionPool.release((ServerSessionImpl) serverSession);
-        serverSessionPool.prune();
+        Scope ss = TRACER.spanBuilder("com.mongodb.internal.session.ServerSessionPool.release").startScopedSpan();
+
+        try {
+            serverSessionPool.release((ServerSessionImpl) serverSession);
+            serverSessionPool.prune();
+        } finally {
+            ss.close();
+        }
     }
 
     public void close() {
+        Scope ss = TRACER.spanBuilder("com.mongodb.internal.session.ServerSessionPool.close").startScopedSpan();
+
         try {
             closing = true;
             serverSessionPool.close();
             endClosedSessions();
         } finally {
             closed = true;
+            ss.close();
         }
     }
 
     public int getInUseCount() {
-        return serverSessionPool.getInUseCount();
+        Scope ss = TRACER.spanBuilder("com.mongodb.internal.session.ServerSessionPool.getInUseCount").startScopedSpan();
+
+        try {
+            return serverSessionPool.getInUseCount();
+        } finally {
+            ss.close();
+        }
     }
 
     private void closeSession(final ServerSessionImpl serverSession) {
-        serverSession.close();
-        // only track closed sessions when pool is in the process of closing
-        if (!closing) {
-            return;
-        }
+        Scope ss = TRACER.spanBuilder("com.mongodb.internal.session.ServerSessionPool.closeSession").startScopedSpan();
 
-        closedSessionIdentifiers.add(serverSession.getIdentifier());
-        if (closedSessionIdentifiers.size() == END_SESSIONS_BATCH_SIZE) {
-            endClosedSessions();
+        try {
+            serverSession.close();
+            // only track closed sessions when pool is in the process of closing
+            if (!closing) {
+                return;
+            }
+
+            closedSessionIdentifiers.add(serverSession.getIdentifier());
+            if (closedSessionIdentifiers.size() == END_SESSIONS_BATCH_SIZE) {
+                endClosedSessions();
+            }
+        } finally {
+            ss.close();
         }
     }
 
     private void endClosedSessions() {
+        Scope ss = TRACER.spanBuilder("com.mongodb.internal.session.ServerSessionPool.endClosedSessions").startScopedSpan();
+
         if (closedSessionIdentifiers.isEmpty()) {
+            TRACER.getCurrentSpan().addAnnotation("Closed session identifiers is empty");
+            ss.close();
             return;
         }
 
@@ -148,19 +184,26 @@ public class ServerSessionPool {
         } finally {
             closedSessionIdentifiers.clear();
             connection.release();
+            ss.close();
         }
     }
 
     private boolean shouldPrune(final ServerSessionImpl serverSession) {
-        Integer logicalSessionTimeoutMinutes = cluster.getCurrentDescription().getLogicalSessionTimeoutMinutes();
-        // if the server no longer supports sessions, prune the session
-        if (logicalSessionTimeoutMinutes == null) {
-            return false;
+        Scope ss = TRACER.spanBuilder("com.mongodb.internal.session.ServerSessionPool.shouldPrune").startScopedSpan();
+
+        try {
+            Integer logicalSessionTimeoutMinutes = cluster.getCurrentDescription().getLogicalSessionTimeoutMinutes();
+            // if the server no longer supports sessions, prune the session
+            if (logicalSessionTimeoutMinutes == null) {
+                return false;
+            }
+            long currentTimeMillis = clock.millis();
+            final long timeSinceLastUse = currentTimeMillis - serverSession.getLastUsedAtMillis();
+            final long oneMinuteFromTimeout = MINUTES.toMillis(logicalSessionTimeoutMinutes - 1);
+            return timeSinceLastUse > oneMinuteFromTimeout;
+        } finally {
+            ss.close();
         }
-        long currentTimeMillis = clock.millis();
-        final long timeSinceLastUse = currentTimeMillis - serverSession.getLastUsedAtMillis();
-        final long oneMinuteFromTimeout = MINUTES.toMillis(logicalSessionTimeoutMinutes - 1);
-        return timeSinceLastUse > oneMinuteFromTimeout;
     }
 
 
@@ -222,14 +265,22 @@ public class ServerSessionPool {
         }
 
         private BsonBinary createNewServerSessionIdentifier() {
-            UuidCodec uuidCodec = new UuidCodec(UuidRepresentation.STANDARD);
-            BsonDocument holder = new BsonDocument();
-            BsonDocumentWriter bsonDocumentWriter = new BsonDocumentWriter(holder);
-            bsonDocumentWriter.writeStartDocument();
-            bsonDocumentWriter.writeName("id");
-            uuidCodec.encode(bsonDocumentWriter, UUID.randomUUID(), EncoderContext.builder().build());
-            bsonDocumentWriter.writeEndDocument();
-            return holder.getBinary("id");
+            Scope ss = TRACER.spanBuilder(
+                    "com.mongodb.internal.session.ServerSessionPool.ServerSessionItemFactory.createNewServerSessionIdentifier")
+                    .startScopedSpan();
+
+            try {
+                UuidCodec uuidCodec = new UuidCodec(UuidRepresentation.STANDARD);
+                BsonDocument holder = new BsonDocument();
+                BsonDocumentWriter bsonDocumentWriter = new BsonDocumentWriter(holder);
+                bsonDocumentWriter.writeStartDocument();
+                bsonDocumentWriter.writeName("id");
+                uuidCodec.encode(bsonDocumentWriter, UUID.randomUUID(), EncoderContext.builder().build());
+                bsonDocumentWriter.writeEndDocument();
+                return holder.getBinary("id");
+            } finally {
+                ss.close();
+            }
         }
     }
 }

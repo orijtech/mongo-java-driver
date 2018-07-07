@@ -44,6 +44,12 @@ import com.mongodb.operation.ReadOperation;
 import com.mongodb.operation.WriteOperation;
 import com.mongodb.selector.ServerSelector;
 
+import io.opencensus.common.Scope;
+import io.opencensus.trace.AttributeValue;
+import io.opencensus.trace.Status;
+import io.opencensus.trace.Tracer;
+import io.opencensus.trace.Tracing;
+
 import java.util.ArrayList;
 import java.util.List;
 
@@ -62,6 +68,7 @@ public class MongoClientDelegate {
     private final List<MongoCredential> credentialList;
     private final Object originator;
     private final OperationExecutor operationExecutor;
+    private static final Tracer TRACER = Tracing.getTracer();
 
     public MongoClientDelegate(final Cluster cluster, final List<MongoCredential> credentialList, final Object originator) {
         this(cluster, credentialList, originator, null);
@@ -83,31 +90,38 @@ public class MongoClientDelegate {
     @Nullable
     public ClientSession createClientSession(final ClientSessionOptions options, final ReadConcern readConcern,
                                              final WriteConcern writeConcern, final ReadPreference readPreference) {
-        notNull("readConcern", readConcern);
-        notNull("writeConcern", writeConcern);
-        notNull("readPreference", readPreference);
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.internal.MongoClientDelegate.ClientSession.createClientSession")
+                         .startScopedSpan();
 
-        if (credentialList.size() > 1) {
-            return null;
-        }
+        try {
+            notNull("readConcern", readConcern);
+            notNull("writeConcern", writeConcern);
+            notNull("readPreference", readPreference);
 
-        ClusterDescription connectedClusterDescription = getConnectedClusterDescription();
+            if (credentialList.size() > 1) {
+                return null;
+            }
 
-        if (connectedClusterDescription.getType() == ClusterType.STANDALONE
-                || connectedClusterDescription.getLogicalSessionTimeoutMinutes() == null) {
-            return null;
-        } else {
-            ClientSessionOptions mergedOptions = ClientSessionOptions.builder(options)
-                    .defaultTransactionOptions(
-                            TransactionOptions.merge(
-                                    options.getDefaultTransactionOptions(),
-                                    TransactionOptions.builder()
-                                            .readConcern(readConcern)
-                                            .writeConcern(writeConcern)
-                                            .readPreference(readPreference)
-                                            .build()))
-                    .build();
-            return new ClientSessionImpl(serverSessionPool, originator, mergedOptions, this);
+            ClusterDescription connectedClusterDescription = getConnectedClusterDescription();
+
+            if (connectedClusterDescription.getType() == ClusterType.STANDALONE
+                    || connectedClusterDescription.getLogicalSessionTimeoutMinutes() == null) {
+                return null;
+            } else {
+                ClientSessionOptions mergedOptions = ClientSessionOptions.builder(options)
+                        .defaultTransactionOptions(
+                                TransactionOptions.merge(
+                                        options.getDefaultTransactionOptions(),
+                                        TransactionOptions.builder()
+                                                .readConcern(readConcern)
+                                                .writeConcern(writeConcern)
+                                                .readPreference(readPreference)
+                                                .build()))
+                        .build();
+                return new ClientSessionImpl(serverSessionPool, originator, mergedOptions, this);
+            }
+        } finally {
+            ss.close();
         }
     }
 
@@ -120,8 +134,16 @@ public class MongoClientDelegate {
     }
 
     public void close() {
-        serverSessionPool.close();
-        cluster.close();
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.internal.MongoClientDelegate.close").startScopedSpan();
+
+        try {
+            TRACER.getCurrentSpan().addAnnotation("Closing serverSessionPool");
+            serverSessionPool.close();
+            TRACER.getCurrentSpan().addAnnotation("Closing the cluster");
+            cluster.close();
+        } finally {
+            ss.close();
+        }
     }
 
     public Cluster getCluster() {
@@ -133,25 +155,41 @@ public class MongoClientDelegate {
     }
 
     private ClusterDescription getConnectedClusterDescription() {
-        ClusterDescription clusterDescription = cluster.getDescription();
-        if (getServerDescriptionListToConsiderForSessionSupport(clusterDescription).isEmpty()) {
-            cluster.selectServer(new ServerSelector() {
-                @Override
-                public List<ServerDescription> select(final ClusterDescription clusterDescription) {
-                    return getServerDescriptionListToConsiderForSessionSupport(clusterDescription);
-                }
-            });
-            clusterDescription = cluster.getDescription();
+        Scope ss = TRACER.spanBuilder(
+                "com.mongodb.client.internal.MongoClientDelegate.DelegateOperationExecutor.getConnectedClusterDescription")
+                .startScopedSpan();
+
+        try {
+            ClusterDescription clusterDescription = cluster.getDescription();
+            if (getServerDescriptionListToConsiderForSessionSupport(clusterDescription).isEmpty()) {
+                cluster.selectServer(new ServerSelector() {
+                    @Override
+                    public List<ServerDescription> select(final ClusterDescription clusterDescription) {
+                        return getServerDescriptionListToConsiderForSessionSupport(clusterDescription);
+                    }
+                });
+                clusterDescription = cluster.getDescription();
+            }
+            return clusterDescription;
+        } finally {
+            ss.close();
         }
-        return clusterDescription;
     }
 
     @SuppressWarnings("deprecation")
     private List<ServerDescription> getServerDescriptionListToConsiderForSessionSupport(final ClusterDescription clusterDescription) {
-        if (clusterDescription.getConnectionMode() == ClusterConnectionMode.SINGLE) {
-            return clusterDescription.getAny();
-        } else {
-            return clusterDescription.getAnyPrimaryOrSecondary();
+        Scope ss = TRACER.spanBuilder(
+                "com.mongodb.client.internal.MongoClientDelegate.DelegateOperationExecutor.getServerDescriptionToConsiderForSessionSupport")
+                .startScopedSpan();
+
+        try {
+            if (clusterDescription.getConnectionMode() == ClusterConnectionMode.SINGLE) {
+                return clusterDescription.getAny();
+            } else {
+                return clusterDescription.getAnyPrimaryOrSecondary();
+            }
+        } finally {
+            ss.close();
         }
     }
 
@@ -169,7 +207,12 @@ public class MongoClientDelegate {
         @Override
         public <T> T execute(final ReadOperation<T> operation, final ReadPreference readPreference, final ReadConcern readConcern,
                              @Nullable final ClientSession session) {
+            Scope ss = TRACER.spanBuilder("com.mongodb.client.internal.MongoClientDelegate.DelegateOperationExecutor.execute/readOperation")
+                             .startScopedSpan();
+
+            TRACER.getCurrentSpan().addAnnotation("Getting client session");
             ClientSession actualClientSession = getClientSession(session);
+            TRACER.getCurrentSpan().addAnnotation("Getting readBinding");
             ReadBinding binding = getReadBinding(readPreference, readConcern, actualClientSession,
                     session == null && actualClientSession != null);
             try {
@@ -179,43 +222,90 @@ public class MongoClientDelegate {
                 return operation.execute(binding);
             } catch (MongoException e) {
                 labelException(session, e);
+                TRACER.getCurrentSpan().setStatus(Status.UNKNOWN.withDescription(e.toString()));
                 throw e;
             } finally {
                 binding.release();
+                ss.close();
             }
         }
 
         @Override
         public <T> T execute(final WriteOperation<T> operation, final ReadConcern readConcern, @Nullable final ClientSession session) {
+            Scope ss = TRACER.spanBuilder(
+                    "com.mongodb.client.internal.MongoClientDelegate.DelegateOperationExecutor.execute/writeOperation")
+                    .startScopedSpan();
+
+            TRACER.getCurrentSpan().addAnnotation("Getting client session");
             ClientSession actualClientSession = getClientSession(session);
+            TRACER.getCurrentSpan().addAnnotation("Getting writeBinding");
             WriteBinding binding = getWriteBinding(readConcern, actualClientSession, session == null && actualClientSession != null);
+
             try {
                 return operation.execute(binding);
             } catch (MongoException e) {
                 labelException(session, e);
+                TRACER.getCurrentSpan().setStatus(Status.UNKNOWN.withDescription(e.toString()));
                 throw e;
             } finally {
+                TRACER.getCurrentSpan().addAnnotation("Invoking binding.release");
                 binding.release();
+                TRACER.getCurrentSpan().addAnnotation("Finished invoking binding.release");
+                ss.close();
             }
         }
 
         WriteBinding getWriteBinding(final ReadConcern readConcern, @Nullable final ClientSession session, final boolean ownsSession) {
-            return getReadWriteBinding(primary(), readConcern, session, ownsSession);
+            Scope ss = TRACER.spanBuilder("com.mongodb.client.internal.MongoClientDelegate.DelegateOperationExecutor.getWriteBinding")
+                             .startScopedSpan();
+
+            try {
+                TRACER.getCurrentSpan().addAnnotation("Getting write binding");
+                TRACER.getCurrentSpan().putAttribute("ownsSession", AttributeValue.booleanAttributeValue(ownsSession));
+                return getReadWriteBinding(primary(), readConcern, session, ownsSession);
+            } finally {
+                ss.close();
+            }
+
         }
 
         ReadBinding getReadBinding(final ReadPreference readPreference, final ReadConcern readConcern,
                                    @Nullable final ClientSession session, final boolean ownsSession) {
-            return getReadWriteBinding(readPreference, readConcern, session, ownsSession);
+            Scope ss = TRACER.spanBuilder(
+                    "com.mongodb.client.internal.MongoClientDelegate.DelegateOperationExecutor.getReadBinding")
+                    .startScopedSpan();
+
+            try {
+                TRACER.getCurrentSpan().addAnnotation("Getting read binding");
+                TRACER.getCurrentSpan().putAttribute("ownsSession", AttributeValue.booleanAttributeValue(ownsSession));
+                return getReadWriteBinding(readPreference, readConcern, session, ownsSession);
+            } finally {
+                ss.close();
+            }
         }
 
         ReadWriteBinding getReadWriteBinding(final ReadPreference readPreference, final ReadConcern readConcern,
                                              @Nullable final ClientSession session, final boolean ownsSession) {
-            ReadWriteBinding readWriteBinding = new ClusterBinding(cluster, getReadPreferenceForBinding(readPreference, session),
-                    readConcern);
-            if (session != null) {
-                readWriteBinding = new ClientSessionBinding(session, ownsSession, readWriteBinding);
+            Scope ss = TRACER.spanBuilder(
+                    "com.mongodb.client.internal.MongoClientDelegate.DelegateOperationExecutor.getReadWriteBinding")
+                    .startScopedSpan();
+
+            try {
+                TRACER.getCurrentSpan().addAnnotation("Getting readWrite binding from ClusterBinding");
+                TRACER.getCurrentSpan().putAttribute("ownsSession", AttributeValue.booleanAttributeValue(ownsSession));
+                ReadWriteBinding readWriteBinding = new ClusterBinding(cluster,
+                                                                getReadPreferenceForBinding(readPreference, session), readConcern);
+
+                if (session != null) {
+                    TRACER.getCurrentSpan().putAttribute("null session", AttributeValue.booleanAttributeValue(true));
+                    readWriteBinding = new ClientSessionBinding(session, ownsSession, readWriteBinding);
+                } else {
+                    TRACER.getCurrentSpan().putAttribute("null session", AttributeValue.booleanAttributeValue(false));
+                }
+                return readWriteBinding;
+            } finally {
+                ss.close();
             }
-            return readWriteBinding;
         }
 
         private void labelException(final @Nullable ClientSession session, final MongoException e) {
@@ -241,15 +331,24 @@ public class MongoClientDelegate {
 
         @Nullable
         ClientSession getClientSession(@Nullable final ClientSession clientSessionFromOperation) {
-            ClientSession session;
-            if (clientSessionFromOperation != null) {
-                isTrue("ClientSession from same MongoClient", clientSessionFromOperation.getOriginator() == originator);
-                session = clientSessionFromOperation;
-            } else {
-                session = createClientSession(ClientSessionOptions.builder().causallyConsistent(false).build(), ReadConcern.DEFAULT,
-                        WriteConcern.ACKNOWLEDGED, ReadPreference.primary());
+            Scope ss = TRACER.spanBuilder("com.mongodb.client.internal.MongoClientDelegate.DelegateOperationExecutor.getClientSession")
+                             .startScopedSpan();
+
+            try {
+                ClientSession session;
+                if (clientSessionFromOperation != null) {
+                    isTrue("ClientSession from same MongoClient", clientSessionFromOperation.getOriginator() == originator);
+                    TRACER.getCurrentSpan().addAnnotation("Reusing the clientSession from operation");
+                    session = clientSessionFromOperation;
+                } else {
+                    TRACER.getCurrentSpan().addAnnotation("Creating a new client session");
+                    session = createClientSession(ClientSessionOptions.builder().causallyConsistent(false).build(), ReadConcern.DEFAULT,
+                            WriteConcern.ACKNOWLEDGED, ReadPreference.primary());
+                }
+                return session;
+            } finally {
+                ss.close();
             }
-            return session;
         }
     }
 }

@@ -28,6 +28,11 @@ import com.mongodb.internal.session.ServerSessionPool;
 import com.mongodb.operation.AbortTransactionOperation;
 import com.mongodb.operation.CommitTransactionOperation;
 
+import io.opencensus.common.Scope;
+import io.opencensus.trace.Status;
+import io.opencensus.trace.Tracer;
+import io.opencensus.trace.Tracing;
+
 import static com.mongodb.assertions.Assertions.isTrue;
 import static com.mongodb.assertions.Assertions.notNull;
 
@@ -42,6 +47,8 @@ final class ClientSessionImpl extends BaseClientSessionImpl implements ClientSes
     private boolean messageSentInCurrentTransaction;
     private boolean commitInProgress;
     private TransactionOptions transactionOptions;
+
+    private static final Tracer TRACER = Tracing.getTracer();
 
     ClientSessionImpl(final ServerSessionPool serverSessionPool, final Object originator, final ClientSessionOptions options,
                       final MongoClientDelegate delegate) {
@@ -128,39 +135,57 @@ final class ClientSessionImpl extends BaseClientSessionImpl implements ClientSes
 
     @Override
     public void abortTransaction() {
-        if (transactionState == TransactionState.ABORTED) {
-            throw new IllegalStateException("Cannot call abortTransaction twice");
-        }
-        if (transactionState == TransactionState.COMMITTED) {
-            throw new IllegalStateException("Cannot call abortTransaction after calling commitTransaction");
-        }
-        if (transactionState == TransactionState.NONE) {
-            throw new IllegalStateException("There is no transaction started");
-        }
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.internal.ClientSessionImpl.abortTransaction").startScopedSpan();
+
         try {
-            if (messageSentInCurrentTransaction) {
-                ReadConcern readConcern = transactionOptions.getReadConcern();
-                if (readConcern == null) {
-                    throw new MongoInternalException("Invariant violated.  Transaction options read concern can not be null");
-                }
-                delegate.getOperationExecutor().execute(new AbortTransactionOperation(transactionOptions.getWriteConcern()),
-                        readConcern, this);
+            if (transactionState == TransactionState.ABORTED) {
+                TRACER.getCurrentSpan().setStatus(Status.ABORTED.withDescription("Cannot call abortTransaction twice"));
+                throw new IllegalStateException("Cannot call abortTransaction twice");
             }
-        } catch (Exception e) {
-            // ignore errors
+            if (transactionState == TransactionState.COMMITTED) {
+                TRACER.getCurrentSpan().setStatus(
+                        Status.ABORTED.withDescription("Cannot call abortTransaction after calling commitTransaction"));
+                throw new IllegalStateException("Cannot call abortTransaction after calling commitTransaction");
+            }
+            if (transactionState == TransactionState.NONE) {
+                TRACER.getCurrentSpan().setStatus(Status.INVALID_ARGUMENT.withDescription("No transaction was started"));
+                throw new IllegalStateException("There is no transaction started");
+            }
+            try {
+                if (messageSentInCurrentTransaction) {
+                    TRACER.getCurrentSpan().addAnnotation("Message sent in current transaction");
+                    ReadConcern readConcern = transactionOptions.getReadConcern();
+                    TRACER.getCurrentSpan().addAnnotation("Got readConcern");
+                    if (readConcern == null) {
+                        TRACER.getCurrentSpan().setStatus(
+                                Status.INTERNAL.withDescription("Invariant violated. Transaction options read concern cannot be null"));
+                        throw new MongoInternalException("Invariant violated.  Transaction options read concern can not be null");
+                    }
+                    delegate.getOperationExecutor().execute(new AbortTransactionOperation(transactionOptions.getWriteConcern()),
+                            readConcern, this);
+                }
+            } catch (Exception e) {
+                // ignore errors
+            } finally {
+                TRACER.getCurrentSpan().setStatus(Status.OK.withDescription("Aborted"));
+                cleanupTransaction(TransactionState.ABORTED);
+            }
         } finally {
-            cleanupTransaction(TransactionState.ABORTED);
+            ss.close();
         }
     }
 
     @Override
     public void close() {
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.internal.ClientSessionImpl.close").startScopedSpan();
+
         try {
             if (transactionState == TransactionState.IN) {
                 abortTransaction();
             }
         } finally {
             super.close();
+            ss.close();
         }
     }
 

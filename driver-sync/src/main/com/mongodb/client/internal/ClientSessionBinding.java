@@ -26,6 +26,10 @@ import com.mongodb.connection.ServerDescription;
 import com.mongodb.internal.session.ClientSessionContext;
 import com.mongodb.session.SessionContext;
 
+import io.opencensus.common.Scope;
+import io.opencensus.trace.Tracer;
+import io.opencensus.trace.Tracing;
+
 import static org.bson.assertions.Assertions.notNull;
 
 /**
@@ -37,6 +41,8 @@ public class ClientSessionBinding implements ReadWriteBinding {
     private final boolean ownsSession;
     private final ClientSessionContext sessionContext;
 
+    private static final Tracer TRACER = Tracing.getTracer();
+
     public ClientSessionBinding(final ClientSession session, final boolean ownsSession, final ReadWriteBinding wrapped) {
         this.wrapped = notNull("wrapped", wrapped);
         this.ownsSession = ownsSession;
@@ -46,29 +52,60 @@ public class ClientSessionBinding implements ReadWriteBinding {
 
     @Override
     public ReadPreference getReadPreference() {
-        return wrapped.getReadPreference();
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.internal.ClientSessionBinding.getReadPreference").startScopedSpan();
+
+        try {
+            return wrapped.getReadPreference();
+        } finally {
+            ss.close();
+        }
     }
 
     @Override
     public int getCount() {
-        return wrapped.getCount();
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.internal.ClientSessionBinding.getCount").startScopedSpan();
+
+        try {
+            return wrapped.getCount();
+        } finally {
+            ss.close();
+        }
     }
 
     @Override
     public ReadWriteBinding retain() {
-        wrapped.retain();
-        return this;
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.internal.ClientSessionBinding.retain").startScopedSpan();
+
+        try {
+            wrapped.retain();
+            return this;
+        } finally {
+            ss.close();
+        }
     }
 
     @Override
     public void release() {
-        wrapped.release();
-        closeSessionIfCountIsZero();
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.internal.ClientSessionBinding.release").startScopedSpan();
+
+        try {
+            wrapped.release();
+            closeSessionIfCountIsZero();
+        } finally {
+            ss.close();
+        }
     }
 
     private void closeSessionIfCountIsZero() {
-        if (getCount() == 0 && ownsSession) {
-            session.close();
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.internal.ClientSessionBinding.closeSessionIfCountIsZero").startScopedSpan();
+
+        try {
+            if (getCount() == 0 && ownsSession) {
+                TRACER.getCurrentSpan().addAnnotation("Closing session since count is zero and ownsSession");
+                session.close();
+            }
+        } finally {
+            ss.close();
         }
     }
 
@@ -85,8 +122,14 @@ public class ClientSessionBinding implements ReadWriteBinding {
 
     @Override
     public ConnectionSource getWriteConnectionSource() {
-        ConnectionSource writeConnectionSource = wrapped.getWriteConnectionSource();
-        return new SessionBindingConnectionSource(writeConnectionSource);
+        Scope ss = TRACER.spanBuilder("com.mongodb.client.internal.ClientSessionBinding.getWriteConnectionSource").startScopedSpan();
+
+        try {
+            ConnectionSource writeConnectionSource = wrapped.getWriteConnectionSource();
+            return new SessionBindingConnectionSource(writeConnectionSource);
+        } finally {
+            ss.close();
+        }
     }
 
     private class SessionBindingConnectionSource implements ConnectionSource {
@@ -98,7 +141,13 @@ public class ClientSessionBinding implements ReadWriteBinding {
 
         @Override
         public ServerDescription getServerDescription() {
-            return wrapped.getServerDescription();
+            Scope ss = TRACER.spanBuilder("com.mongodb.client.internal.ClientSessionBinding.getServerDescription").startScopedSpan();
+
+            try {
+                return wrapped.getServerDescription();
+            } finally {
+                ss.close();
+            }
         }
 
         @Override
@@ -108,7 +157,13 @@ public class ClientSessionBinding implements ReadWriteBinding {
 
         @Override
         public Connection getConnection() {
-            return wrapped.getConnection();
+            Scope ss = TRACER.spanBuilder("com.mongodb.client.internal.ClientSessionBinding.getConnection").startScopedSpan();
+
+            try {
+                return wrapped.getConnection();
+            } finally {
+                ss.close();
+            }
         }
 
         @Override
@@ -120,13 +175,25 @@ public class ClientSessionBinding implements ReadWriteBinding {
 
         @Override
         public int getCount() {
-            return wrapped.getCount();
+            Scope ss = TRACER.spanBuilder("com.mongodb.client.internal.ClientSessionBinding.getCount").startScopedSpan();
+
+            try {
+                return wrapped.getCount();
+            } finally {
+                ss.close();
+            }
         }
 
         @Override
         public void release() {
-            wrapped.release();
-            closeSessionIfCountIsZero();
+            Scope ss = TRACER.spanBuilder("com.mongodb.client.internal.ClientSessionBinding.release").startScopedSpan();
+
+            try {
+                wrapped.release();
+                closeSessionIfCountIsZero();
+            } finally {
+                ss.close();
+            }
         }
     }
 
